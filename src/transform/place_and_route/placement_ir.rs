@@ -11,7 +11,7 @@
 //! adds pin facings and first-class placement legality (overlap, bounds) and
 //! bounding-box cost queries. The placement and routing engines land later.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use eyre::{bail, ContextCompat};
 
@@ -317,22 +317,40 @@ impl PlacementProblem {
         template.instantiate(instance.position, instance.rotation)
     }
 
-    /// Pairs of instances whose block cells intersect, in deterministic order.
+    /// Pairs of instances whose macro footprints intersect, in deterministic
+    /// order. The whole template bounding box is reserved, not only its blocks.
     pub fn overlaps(&self) -> Vec<(usize, usize)> {
-        let mut occupied = HashMap::<Position, Vec<usize>>::new();
-        let mut pairs = BTreeSet::new();
+        let mut bounds = Vec::with_capacity(self.instances.len());
         for instance in &self.instances {
-            let Ok(blocks) = self.instance_blocks(instance.id) else {
+            let Ok(template) = self.template_for(instance.id) else {
                 continue;
             };
-            for (position, _) in blocks {
-                let occupants = occupied.entry(position).or_default();
-                for other in occupants.iter().copied() {
-                    if other != instance.id {
-                        pairs.insert((other.min(instance.id), other.max(instance.id)));
-                    }
+            let size = template.size;
+            bounds.push((
+                instance.id,
+                instance.position,
+                Position(
+                    instance.position.0 + size.0.saturating_sub(1),
+                    instance.position.1 + size.1.saturating_sub(1),
+                    instance.position.2 + size.2.saturating_sub(1),
+                ),
+            ));
+        }
+
+        let mut pairs = BTreeSet::new();
+        for first in 0..bounds.len() {
+            for second in (first + 1)..bounds.len() {
+                let (first_id, first_min, first_max) = bounds[first];
+                let (second_id, second_min, second_max) = bounds[second];
+                let intersects = first_min.0 <= second_max.0
+                    && second_min.0 <= first_max.0
+                    && first_min.1 <= second_max.1
+                    && second_min.1 <= first_max.1
+                    && first_min.2 <= second_max.2
+                    && second_min.2 <= first_max.2;
+                if intersects {
+                    pairs.insert((first_id.min(second_id), first_id.max(second_id)));
                 }
-                occupants.push(instance.id);
             }
         }
         pairs.into_iter().collect()
