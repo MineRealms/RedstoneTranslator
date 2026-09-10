@@ -41,11 +41,13 @@ impl LogicGraph {
 
     pub fn prepare_place(self) -> eyre::Result<Self> {
         let mut transform = LogicGraphTransformer::new(self);
+        transform.fold_constants()?;
         transform.decompose_xor()?;
         transform.decompose_and()?;
         transform.remove_double_neg_expression();
         transform.optimize_cse()?;
         transform.insert_buffers_for_direct_or_to_or()?;
+        transform.insert_buffers_for_constant_or_inputs()?;
         Ok(transform.finish())
     }
 

@@ -1,6 +1,7 @@
 mod buffers;
 mod compose;
 mod decompose;
+mod fold_constants;
 mod fold_or;
 mod optimize;
 

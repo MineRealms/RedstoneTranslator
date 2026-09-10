@@ -2327,6 +2327,126 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    #[ignore = "search-heavy fsm global pnr smoke test"]
+    fn fsm_module_generates_world_from_child_layout_candidates() -> eyre::Result<()> {
+        init_tracing_from_env();
+        // One state bit: the local placer currently cannot reliably place the
+        // denser two-bit FSM next-state cone. The two-bit FSM is covered at the
+        // mapping level in `ir::mapping::tests`.
+        let source = r#"
+            module fsm(clk, go, state, done);
+              input clk, go;
+              output reg state;
+              output reg done;
+              always @(posedge clk) begin
+                case (state)
+                  0: begin if (go) begin state <= 1; end end
+                  default: state <= 0;
+                endcase
+              end
+              always @(*) begin
+                case (state)
+                  1: done <= 1;
+                  default: done <= 0;
+                endcase
+              end
+            endmodule
+            "#;
+        let logical = LogicalDesign::from_verilog_source(source)?;
+        let free_3d_heuristics = [2, 4, 6]
+            .into_iter()
+            .flat_map(|clearance| {
+                (0..8).map(move |seed| {
+                    PlacementHeuristic::Free3D(Free3DPlacementConfig {
+                        seed,
+                        clearance,
+                        ..Free3DPlacementConfig::default()
+                    })
+                })
+            })
+            .collect();
+        let mut local_config = sequential_local_config();
+        local_config.max_route_step = 8;
+        local_config.max_not_route_step = 6;
+        local_config.step_sampling_policy = SamplingPolicy::Random(32);
+        local_config.route_step_sampling_policy = SamplingPolicy::Random(32);
+        local_config.not_route_step_sampling_policy = SamplingPolicy::Random(32);
+        let config = GlobalPnrConfig {
+            candidate: UnitCandidateConfig {
+                dim: DimSize(16, 16, 6),
+                local_config,
+                max_candidates: 2,
+                combinational_sampling_limit: Some(32),
+                ..Default::default()
+            }
+            .into(),
+            placement: GlobalPlacementConfig {
+                spacing: 4,
+                shelf_width: 64,
+                max_attempts: 64,
+                ..Default::default()
+            },
+            routing_probe: Some(GlobalRoutingConfig {
+                strategy: crate::transform::place_and_route::global_pnr::router::GlobalRoutingStrategy::DirectGreedy {
+                    max_steps: 128,
+                },
+                validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+            }),
+            routing: GlobalRoutingConfig {
+                strategy: crate::transform::place_and_route::global_pnr::router::GlobalRoutingStrategy::GreedyBeam {
+                    beam_width: 128,
+                    max_expansions: 4_096,
+                    variant_seed: 0,
+                },
+                validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+            },
+            routing_refinement: Some(GlobalRoutingConfig {
+                strategy: crate::transform::place_and_route::global_pnr::router::GlobalRoutingStrategy::GreedyBeam {
+                    beam_width: 128,
+                    max_expansions: 4_096,
+                    variant_seed: 0,
+                },
+                validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+            }),
+            search: GlobalSearchConfig {
+                budget: GlobalSearchBudget {
+                    max_candidates_per_child: 2,
+                    max_layout_combinations: 4,
+                    max_detailed_routing_attempts: 2,
+                    max_refined_routing_attempts: 2,
+                    max_refinement_rounds: 8,
+                },
+                policies: GlobalPnrPolicies {
+                    placement_heuristics: free_3d_heuristics,
+                    net_order_strategies: vec![
+                        NetOrderStrategy::Criticality,
+                        NetOrderStrategy::HighestFanoutFirst,
+                    ],
+                },
+            },
+            ..Default::default()
+        };
+
+        let result = place_and_route_logical_design_with_visualization(&logical, &config)?;
+        let placed = result.placed_world;
+
+        assert!(!placed.world.iter_block().is_empty());
+        let mut output_names = placed
+            .outputs
+            .iter()
+            .map(|output| output.name.as_str())
+            .collect::<Vec<_>>();
+        output_names.sort();
+        assert_eq!(output_names, vec!["done", "state_0", "state_1"]);
+        let nbt: NBTRoot = placed.world.to_nbt();
+        nbt.save("test/fsm-global-smoke.nbt");
+        placed
+            .metadata()
+            .save("test/fsm-global-smoke.outputs.json")?;
+        Ok(())
+    }
+
     fn init_tracing_from_env() {
         let level = rust_log_level().unwrap_or(tracing::Level::INFO);
         let _ = tracing_subscriber::fmt().with_max_level(level).try_init();

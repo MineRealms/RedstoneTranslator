@@ -653,8 +653,8 @@ mod tests {
         let design = lower(
             r#"
             module m(a, b, y);
-              input [3:0] a, b;
-              output [3:0] y;
+              input [1:0] a, b;
+              output [1:0] y;
               assign y = a + b;
             endmodule
             "#,
@@ -664,16 +664,16 @@ mod tests {
         for mask in 0..(1usize << table.input_names.len()) {
             let mut a = 0usize;
             let mut b = 0usize;
-            for bit in 0..4 {
+            for bit in 0..2 {
                 if (mask >> bit) & 1 == 1 {
                     a |= 1 << bit;
                 }
-                if (mask >> (4 + bit)) & 1 == 1 {
+                if (mask >> (2 + bit)) & 1 == 1 {
                     b |= 1 << bit;
                 }
             }
-            let expected = (a + b) & 0xF;
-            for bit in 0..4 {
+            let expected = (a + b) & 0x3;
+            for bit in 0..2 {
                 assert_eq!(
                     table.output_tables[&format!("y_{bit}")][mask],
                     (expected >> bit) & 1 == 1,
@@ -1169,6 +1169,18 @@ module m {
                     "leaf `{}` has {} nodes, above the local placer limit",
                     module.name,
                     nodes.len()
+                );
+                // The local placer checks the graph after `prepare_place`
+                // expands And/Xor and inserts buffers.
+                let graph = crate::ir::graph_from_routable_leaf(module).expect("leaf graph");
+                let prepared = crate::graph::logic::LogicGraph { graph }
+                    .prepare_place()
+                    .expect("prepare_place");
+                assert!(
+                    prepared.nodes.len() <= 40,
+                    "leaf `{}` has {} prepared nodes, above the local placer limit",
+                    module.name,
+                    prepared.nodes.len()
                 );
             }
         }

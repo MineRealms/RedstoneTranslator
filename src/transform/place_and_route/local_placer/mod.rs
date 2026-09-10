@@ -641,7 +641,14 @@ impl LocalPlacer {
                 .chain(self.graph.nodes.iter().filter_map(|node| {
                     matches!(node.kind, GraphNodeKind::Input(_)).then_some(node.id)
                 }))
-                .chain(self.graph.externally_observable_output_source_ids())
+                // Every output endpoint falls back to its producer's position
+                // when outputs are not materialized, so keep all output
+                // producers alive even when they also feed internal logic.
+                .chain(self.graph.nodes.iter().filter_map(|node| {
+                    matches!(node.kind, GraphNodeKind::Output(_))
+                        .then(|| node.inputs.first().copied())
+                        .flatten()
+                }))
                 .chain(
                     self.config
                         .materialize_outputs

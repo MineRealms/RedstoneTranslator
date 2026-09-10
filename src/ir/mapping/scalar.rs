@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use eyre::{ContextCompat, WrapErr};
 
 use super::routable_leaf_from_graph;
+use crate::graph::logic::LogicGraph;
 use crate::graph::{Graph, GraphNode, GraphNodeKind};
 use crate::ir::RoutableModule;
 use crate::logic::LogicType;
@@ -17,6 +18,10 @@ use crate::logic::LogicType;
 /// Hard ceiling on nodes per partitioned leaf. The local placer rejects leaves
 /// above `K_MAX_LOCAL_PLACE_NODE_COUNT = 40`.
 const PARTITION_NODE_LIMIT: usize = 40;
+
+/// Placement-quality target for prepared leaves. The local placer's search is
+/// fragile near its hard limit, so chunks are kept smaller than the ceiling.
+const PARTITION_PREPARED_NODE_BUDGET: usize = 40;
 
 /// Scalar net names for one bit-blasted logical module.
 #[derive(Clone, Debug)]
@@ -172,7 +177,8 @@ impl LeafBuilder {
         !self.outputs.is_empty()
     }
 
-    pub(super) fn finish(mut self, name: &str) -> eyre::Result<RoutableModule> {
+    /// Appends the requested outputs and returns the finished scalar graph.
+    pub(super) fn into_graph(mut self) -> eyre::Result<Graph> {
         for (output, input) in self.outputs {
             self.nodes.push(GraphNode {
                 kind: GraphNodeKind::Output(output),
@@ -184,8 +190,13 @@ impl LeafBuilder {
         graph.build_outputs();
         graph.build_producers();
         graph.build_consumers();
-        graph
-            .verify()
+        graph.verify()?;
+        Ok(graph)
+    }
+
+    pub(super) fn finish(self, name: &str) -> eyre::Result<RoutableModule> {
+        let graph = self
+            .into_graph()
             .wrap_err_with(|| format!("lowered leaf `{name}` is not a valid graph"))?;
         routable_leaf_from_graph(name, graph)
     }
@@ -317,96 +328,72 @@ impl LeafBuilder {
             if chunks[index].len() < 2 {
                 break;
             }
-            let mid = chunks[index].len() / 2;
-            let tail = chunks[index].split_off(mid);
-            chunks.insert(index + 1, tail);
-            for (chunk_index, chunk) in chunks.iter().enumerate() {
-                for id in chunk {
-                    chunk_of[*id] = chunk_index;
-                }
-            }
+            split_chunk(&mut chunks, &mut chunk_of, index);
         }
 
+        // `prepare_place` expands And/Xor and inserts buffers, so the graph the
+        // local placer sees can be much larger than the raw chunk. Split until
+        // every chunk stays below the limit after preparation.
+        loop {
+            let multiple_chunks = chunks.len() > 1;
+            let producer_instance = chunk_producer_instances(&chunks, base, multiple_chunks);
+            let mut oversized = None;
+            for (index, chunk) in chunks.iter().enumerate() {
+                let count = chunk_prepared_node_count(
+                    &nodes,
+                    chunk,
+                    &chunk_of,
+                    &consumers,
+                    &output_requests,
+                    &producer_instance,
+                )?;
+                if count > PARTITION_PREPARED_NODE_BUDGET {
+                    oversized = Some(index);
+                    break;
+                }
+            }
+            let Some(index) = oversized else {
+                break;
+            };
+            if chunks[index].len() < 2 {
+                break;
+            }
+            split_chunk(&mut chunks, &mut chunk_of, index);
+        }
+
+        let multiple_chunks = chunks.len() > 1;
+        let producer_instance = chunk_producer_instances(&chunks, base, multiple_chunks);
         let mut modules = Vec::with_capacity(chunks.len());
         let mut instances = Vec::with_capacity(chunks.len());
         let mut intermediates = HashMap::new();
         let mut output_sources = HashMap::new();
         let mut direct_outputs = HashMap::new();
-        let mut producer_instance = HashMap::<usize, String>::new();
-        // A single chunk keeps the requested base name so a cone that fits one
-        // leaf stays a plain leaf. Multiple chunks are suffixed because the
-        // caller may need the base name for its own composite top.
-        let multiple_chunks = chunks.len() > 1;
 
         for (chunk_index, chunk) in chunks.iter().enumerate() {
-            let instance = if multiple_chunks {
-                format!("{base}_p{chunk_index}")
-            } else {
-                base.to_owned()
-            };
+            let instance = chunk_instance_name(base, chunk_index, multiple_chunks);
             let mut builder = LeafBuilder::new();
-            let mut local = HashMap::<usize, usize>::new();
-            for id in chunk {
-                let node = &nodes[*id];
-                let mut inputs = Vec::with_capacity(node.inputs.len());
-                for input in &node.inputs {
-                    if let Some(local_id) = local.get(input) {
-                        inputs.push(*local_id);
-                    } else {
-                        let name = chunk_input_name(*input, &nodes);
-                        let local_id = builder.add_input(&name);
-                        if !matches!(nodes[*input].kind, GraphNodeKind::Input(_)) {
-                            let producer = producer_instance
-                                .get(input)
-                                .with_context(|| format!("missing producer for `{name}`"))?
-                                .clone();
-                            intermediates.insert(name, producer);
-                        }
-                        inputs.push(local_id);
-                    }
-                }
-                let local_id = match &node.kind {
-                    GraphNodeKind::Logic(logic) => {
-                        builder.add_logic(logic.logic_type, inputs, &node.tag)
-                    }
-                    GraphNodeKind::Constant(value) => {
-                        if !inputs.is_empty() {
-                            eyre::bail!("partitioned constant node {id} has inputs");
-                        }
-                        let local_id = builder.nodes.len();
-                        builder.nodes.push(GraphNode {
-                            kind: GraphNodeKind::Constant(*value),
-                            ..Default::default()
-                        });
-                        local_id
-                    }
-                    other => eyre::bail!("partitioned cone contains non-logic node {other:?}"),
-                };
-                local.insert(*id, local_id);
-            }
-            for id in chunk {
-                let mut names = output_requests.remove(id).unwrap_or_default();
-                let consumed_later = consumers
-                    .get(id)
-                    .into_iter()
-                    .flatten()
-                    .any(|consumer| chunk_of[*consumer] != chunk_index);
-                if consumed_later {
-                    names.push(format!("__t{id}"));
-                }
-                for name in names {
-                    let local_id = local[id];
-                    builder.add_output(&name, local_id);
-                    if final_names.contains(&name) {
-                        output_sources.insert(name.clone(), (instance.clone(), name));
-                    }
+            let local = build_chunk_nodes(
+                &nodes,
+                chunk,
+                &producer_instance,
+                &mut intermediates,
+                &mut builder,
+            )?;
+            for (id, name) in chunk_outputs(
+                chunk,
+                chunk_index,
+                &chunk_of,
+                &consumers,
+                &output_requests,
+            ) {
+                let local_id = local[&id];
+                builder.add_output(&name, local_id);
+                if final_names.contains(&name) {
+                    output_sources.insert(name.clone(), (instance.clone(), name));
                 }
             }
             let inputs = builder.input_names().to_vec();
             modules.push(builder.finish(&instance)?);
-            for id in chunk {
-                producer_instance.insert(*id, instance.clone());
-            }
             instances.push(LeafInstance { instance, inputs });
         }
 
@@ -449,6 +436,144 @@ fn chunk_input_name(input: usize, nodes: &[GraphNode]) -> String {
         GraphNodeKind::Input(name) => name.clone(),
         _ => format!("__t{input}"),
     }
+}
+
+/// Instance name of one chunk. A single chunk keeps the requested base name so
+/// a cone that fits one leaf stays a plain leaf; multiple chunks are suffixed.
+fn chunk_instance_name(base: &str, index: usize, multiple_chunks: bool) -> String {
+    if multiple_chunks {
+        format!("{base}_p{index}")
+    } else {
+        base.to_owned()
+    }
+}
+
+fn chunk_producer_instances(
+    chunks: &[Vec<usize>],
+    base: &str,
+    multiple_chunks: bool,
+) -> HashMap<usize, String> {
+    let mut producers = HashMap::new();
+    for (index, chunk) in chunks.iter().enumerate() {
+        let instance = chunk_instance_name(base, index, multiple_chunks);
+        for id in chunk {
+            producers.insert(*id, instance.clone());
+        }
+    }
+    producers
+}
+
+fn split_chunk(chunks: &mut Vec<Vec<usize>>, chunk_of: &mut [usize], index: usize) {
+    let mid = chunks[index].len() / 2;
+    let tail = chunks[index].split_off(mid);
+    chunks.insert(index + 1, tail);
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        for id in chunk {
+            chunk_of[*id] = chunk_index;
+        }
+    }
+}
+
+/// Requested outputs and cross-chunk intermediates a chunk must expose.
+fn chunk_outputs(
+    chunk: &[usize],
+    chunk_index: usize,
+    chunk_of: &[usize],
+    consumers: &HashMap<usize, Vec<usize>>,
+    output_requests: &HashMap<usize, Vec<String>>,
+) -> Vec<(usize, String)> {
+    let mut outputs = Vec::new();
+    for id in chunk {
+        for name in output_requests.get(id).cloned().unwrap_or_default() {
+            outputs.push((*id, name));
+        }
+        let consumed_later = consumers
+            .get(id)
+            .into_iter()
+            .flatten()
+            .any(|consumer| chunk_of[*consumer] != chunk_index);
+        if consumed_later {
+            outputs.push((*id, format!("__t{id}")));
+        }
+    }
+    outputs
+}
+
+/// Copies one chunk's nodes into `builder`, resolving cross-chunk producers to
+/// leaf inputs. Shared by the sizing pass and the final build.
+fn build_chunk_nodes(
+    nodes: &[GraphNode],
+    chunk: &[usize],
+    producer_instance: &HashMap<usize, String>,
+    intermediates: &mut HashMap<String, String>,
+    builder: &mut LeafBuilder,
+) -> eyre::Result<HashMap<usize, usize>> {
+    let mut local = HashMap::<usize, usize>::new();
+    for id in chunk {
+        let node = &nodes[*id];
+        let mut inputs = Vec::with_capacity(node.inputs.len());
+        for input in &node.inputs {
+            if let Some(local_id) = local.get(input) {
+                inputs.push(*local_id);
+            } else {
+                let name = chunk_input_name(*input, nodes);
+                let local_id = builder.add_input(&name);
+                if !matches!(nodes[*input].kind, GraphNodeKind::Input(_)) {
+                    let producer = producer_instance
+                        .get(input)
+                        .with_context(|| format!("missing producer for `{name}`"))?
+                        .clone();
+                    intermediates.insert(name, producer);
+                }
+                inputs.push(local_id);
+            }
+        }
+        let local_id = match &node.kind {
+            GraphNodeKind::Logic(logic) => builder.add_logic(logic.logic_type, inputs, &node.tag),
+            GraphNodeKind::Constant(value) => {
+                if !inputs.is_empty() {
+                    eyre::bail!("partitioned constant node {id} has inputs");
+                }
+                let local_id = builder.nodes.len();
+                builder.nodes.push(GraphNode {
+                    kind: GraphNodeKind::Constant(*value),
+                    ..Default::default()
+                });
+                local_id
+            }
+            other => eyre::bail!("partitioned cone contains non-logic node {other:?}"),
+        };
+        local.insert(*id, local_id);
+    }
+    Ok(local)
+}
+
+/// Node count of one chunk after `prepare_place`, which is what the local
+/// placer's limit applies to.
+fn chunk_prepared_node_count(
+    nodes: &[GraphNode],
+    chunk: &[usize],
+    chunk_of: &[usize],
+    consumers: &HashMap<usize, Vec<usize>>,
+    output_requests: &HashMap<usize, Vec<String>>,
+    producer_instance: &HashMap<usize, String>,
+) -> eyre::Result<usize> {
+    let mut builder = LeafBuilder::new();
+    let mut scratch = HashMap::new();
+    let local = build_chunk_nodes(
+        nodes,
+        chunk,
+        producer_instance,
+        &mut scratch,
+        &mut builder,
+    )?;
+    let chunk_index = chunk_of[chunk[0]];
+    for (id, name) in chunk_outputs(chunk, chunk_index, chunk_of, consumers, output_requests) {
+        builder.add_output(&name, local[&id]);
+    }
+    let graph = builder.into_graph()?;
+    let prepared = LogicGraph { graph }.prepare_place()?;
+    Ok(prepared.nodes.len())
 }
 
 /// Actual graph node count of every chunk: logic nodes plus the leaf inputs

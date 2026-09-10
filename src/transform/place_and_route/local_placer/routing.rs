@@ -292,6 +292,40 @@ pub(super) fn generate_routes_to_cobble(
     .collect()
 }
 
+/// Routes a source position to a target position. Diode sources keep the
+/// original OR-route behavior; redstone wires and constant redstone blocks use
+/// the generic goal router with an explicit redstone search budget.
+pub(super) fn generate_routes_to_position(
+    config: &LocalPlacerConfig,
+    world: &World3D,
+    source: Position,
+    target: Position,
+) -> Vec<(World3D, Position)> {
+    let source_node = PlacedNode::new(source, world[source]);
+    if source_node.is_diode() {
+        return generate_or_routes(config, world, source, target)
+            .routes
+            .into_iter()
+            .map(|(world, path)| {
+                let terminal = path.last().copied().unwrap_or(target);
+                (world, terminal)
+            })
+            .collect();
+    }
+
+    let route_config = LocalPlacerConfig {
+        not_route_strategy: NotRouteStrategy::DirectAndRedstone,
+        max_not_route_step: config.max_route_step,
+        not_route_step_sampling_policy: config.route_step_sampling_policy,
+        ..*config
+    };
+    generate_routes_for_goal(&route_config, world, source, RouteGoal::ConnectPosition { target })
+        .into_iter()
+        .sorted_by_key(|candidate| candidate.cost)
+        .map(|candidate| (candidate.world, candidate.terminal))
+        .collect()
+}
+
 // torch를 연결하는 redstone routes를 생성한다.
 pub(super) fn generate_routes_to_cobble_with_paths(
     config: &LocalPlacerConfig,
@@ -745,7 +779,12 @@ pub(super) fn generate_or_routes_init_states(
 ) -> (Vec<(World3D, Vec<Position>, Vec<PlaceBound>)>, RouteDebug) {
     let from_node = PlacedNode::new(from, world[from]);
     let to_node = PlacedNode::new(to, world[to]);
-    assert!(from_node.is_diode() && to_node.is_propagation_target());
+    assert!(
+        from_node.is_diode() && to_node.is_propagation_target(),
+        "generate_or_routes requires a diode source and a propagation target, got from={:?} to={:?}",
+        world[from].kind,
+        world[to].kind
+    );
 
     let mut debug = RouteDebug::default();
     let boolean_comb = [false, true];

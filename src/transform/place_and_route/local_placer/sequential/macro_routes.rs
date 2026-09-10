@@ -92,8 +92,9 @@ pub(in super::super) fn route_sequential_inputs(
         worlds = worlds
             .into_iter()
             .flat_map(|world| {
-                generate_or_routes(config, &world, source, target)
-                    .routes
+                // The source may be a redstone wire or a constant redstone
+                // block, not only a diode, so use the generic goal router.
+                generate_routes_to_position(config, &world, source, target)
                     .into_iter()
                     .map(|(world, _)| world)
                     .collect_vec()
