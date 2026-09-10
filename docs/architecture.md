@@ -431,6 +431,13 @@ existing `LayoutCandidateCost` metrics (volume, footprint, height, access
 points) are the acceptance metrics. The ladder, not a single hard box, is the
 search domain.
 
+Implemented in `place_and_route::compression`: `compress` owns the descending
+iteration and acceptance bookkeeping, and
+`place_and_route_with_compression` runs the full PnR flow once per box,
+constraining every top-level instance inside the box through a generated
+physical intent (`Inside` constraints over one region). CLI wiring and
+benchmark evidence are the remaining M5 work.
+
 ## 12. Compatibility and migration strategy
 
 1. **No IR changes.** `LogicalDesign`, `RoutableDesign`, RCIR, snapshots, and
