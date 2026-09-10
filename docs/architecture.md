@@ -163,24 +163,134 @@ cost = 1.0  * estimated_wire_length        (HPWL over nets)
 The existing beam-search placer stays available behind a config switch until
 the annealing path passes all benchmarks, then is deprecated.
 
-## 6. Phase 4 — Detailed 3D A* router
+## 6. Phase 4 — Detailed routing: extract the engine from the existing router
 
-The repository already contains an A* router in `global_pnr/router.rs`. The
-migration extracts a reusable engine:
+M2 is **not** "write a new A*". The repository already routes with a unified
+search queue (`BreadthFirst | AStar | DirectGreedy | GreedyBeam`), a
+`RouteSearchState`, `PlaceBound` expansion, `detailed_router` block
+realization, and simulator-based power contracts. M2 extracts that machinery
+into a reusable engine while preserving behavior exactly.
 
-Proposed module: `src/transform/place_and_route/route_engine.rs`
+Behavior-equivalence is the first principle: all existing tests must pass
+unchanged, and the new engine's default configuration must reproduce the old
+point-to-point results. No new heuristic, congestion, or escape scoring lands
+in M2.
 
-- Search state: `(position, direction, signal_strength)`.
-- Costs: step 1, turn 3, repeater 8, congestion dynamic, blocked = infinite.
-- Heuristic: 3D Manhattan distance to the sink.
-- Redstone semantics encoded in the engine: strength decay, torch/repeater
-  directionality, forbidden contacts, short-circuit rejection.
-- Both the detailed router and the local candidate generator use the engine.
+### 6.1 Module layout
 
-The engine must be pure over `World3D` so it can be unit-tested with the
-existing simulator fixtures.
+Small files under `src/transform/place_and_route/route_engine/`:
 
-### 6.1 Pin escape routing
+- `state.rs`: `RouteState`, `RouteStep`, `ElectricalState`.
+- `cost.rs`: `RouteCostModel`.
+- `expansion.rs`: neighbor expansion from `PlaceBound` plus `detailed_router`.
+- `queue.rs`: the search queue (A*, beam, BFS) extracted from `router.rs`.
+- `engine.rs`: `RouteEngine::route(&RouteProblem)`.
+- `validation.rs`: `RouteValidator` trait and the fast rule checks.
+
+`router.rs` keeps net ordering, fanout handling, topology logic, and calls the
+engine. `detailed_router.rs` keeps `ElectricalPath -> Minecraft blocks`.
+
+### 6.2 RouteProblem and RouteEndpoint
+
+```rust
+pub struct RouteProblem<'a> {
+    pub world: &'a World3D,
+    pub source: RouteEndpoint,
+    pub sink: RouteEndpoint,
+    pub net_id: Option<NetId>,
+    pub constraints: RouteConstraints,
+}
+
+pub struct RouteEndpoint {
+    pub position: Position,
+    pub allowed_entries: Vec<Direction>,  // pin escape; empty = any
+    pub required_power: bool,
+}
+```
+
+`allowed_entries` carries the macro pin escape positions that M1 already
+records. Spatial pin facing stays out of M2; `MacroPin.facing` lands in M3,
+where placement costs consume it.
+
+### 6.3 State and electrical mode
+
+```rust
+pub struct RouteState {
+    pub position: Position,
+    pub incoming: Option<Direction>,
+    pub electrical: ElectricalState,
+    pub cost: RouteCost,
+    pub path: Vec<RouteStep>,
+}
+
+pub enum ElectricalState {
+    Wire { strength: u8 },
+    Repeater { delay: u8 },
+    Torch,
+    HardPowered,
+}
+```
+
+Do not introduce a second signal-mode enum: the existing `PropagateType`
+(`Soft | Hard | Torch | Repeater`) is the mode type and maps directly onto
+`ElectricalState`.
+
+### 6.4 Cost model
+
+```rust
+pub struct RouteCostModel {
+    pub step_cost: i32,
+    pub turn_cost: i32,
+    pub repeater_cost: i32,
+    pub low_strength_penalty: i32,
+}
+```
+
+Defaults replicate the current behavior: `step = 1`, `turn = 3`,
+`repeater = 8`, plus the existing low-strength penalty. Congestion stays at
+zero until M4. The model is pluggable, but changing defaults is a separate,
+benchmarked change.
+
+### 6.5 Two-level validation
+
+- **Level 1 (per expansion)**: cheap rules only — strength decay, direction,
+  occupancy, forbidden contacts, short-circuit checks.
+- **Level 2 (complete candidate only)**: run the existing simulator
+  (`active_route_power_after_settle` /
+  `Simulator::from_preserving_torch_states_with_limits_and_trace`) and accept
+  or reject the finished path.
+
+Simulating every A* node would explode, so simulate-based penalties feed back
+into routing only in M4 (PathFinder).
+
+```rust
+pub trait RouteValidator {
+    fn validate(&self, route: &RoutePath) -> ValidationResult;
+}
+```
+
+### 6.6 Mandatory gap: `PlaceBound::propagated_from`
+
+`propagated_from` currently panics (`todo!()`) for Torch, Repeater,
+RedstoneBlock, and Switch. Reverse search, escape routing, and bidirectional
+heuristics all need predecessor enumeration. M2 implements these rules before
+the engine is switched on, covered by dedicated tests.
+
+### 6.7 M2 substeps and exit criteria
+
+- M2.0: extract queue/state/expansion into `route_engine/`; the old router
+  calls the extracted code with identical behavior.
+- M2.1: implement `propagated_from` for the four missing block kinds.
+- M2.2: make `RouteCostModel` explicit; defaults equal the old costs.
+- M2.3: add the `RouteValidator` interface and move the simulator contract
+  check behind it.
+
+Exit criteria: the new engine replaces the old point-to-point route; old/new
+parity on the same `(world, source, sink)` inputs; simulator validation
+passes; the cost model is pluggable; `propagated_from` is complete. Not
+required in M2: congestion, SA feedback, escape scoring, compression.
+
+### 6.8 Pin escape routing
 
 A* can find a theoretical path while the pin is physically boxed in by
 neighbouring macros. Placement must therefore score pin accessibility, not just
@@ -198,6 +308,8 @@ pin existence.
   pin block itself, mirroring PCB escape routing.
 - Macros publish precomputed escape directions per pin (`pin_escape`) so the
   map is cheap to build.
+- Spatial pin facing (`MacroPin.facing`) is a placement-cost input and lands in
+  M3; M2 only needs escape positions, exposed as `RouteEndpoint.allowed_entries`.
 
 ## 7. Phase 5 — Coarse global routing
 
@@ -323,7 +435,7 @@ with its acceptance evidence.
 | --- | --- | --- |
 | M0 | Benchmark set + baseline metrics harness | `not_chain`, `full_adder`, `dense_or_cone`, `fsm_1bit`, `fsm_2bit`, `random_10`, `random_40` all lower to a valid topology; baseline metrics recorded (leaves, prepared sizes, P&R success/time) |
 | M1 | Placement IR + macro model; old engine unchanged | New IR unit tests; all existing tests green; one primitive macro and one logic macro (full adder) round-trip through the IR |
-| M2 | Unified 3D A* route engine with redstone rules | Route engine unit tests vs simulator fixtures; old router delegates and keeps identical results |
+| M2 | Router core extraction: M2.0 extract queue/state/expansion, M2.1 reverse propagation rules, M2.2 explicit cost model, M2.3 validator interface | Old/new parity on the same `(world, source, sink)` inputs; simulator validation passes; cost model pluggable; `propagated_from` complete for Torch/Repeater/RedstoneBlock/Switch |
 | M3 | Macro placement: topological seed + force-directed + SA refinement, behind a flag | One-bit FSM leaf places; full adder and dense OR cone place; old engine still default |
 | M4 | Coarse global routing + PathFinder negotiated congestion + conflict feedback | Two-bit FSM and dense OR cone place deterministically; snapshot replay stable |
 | M5 | Compression ladder + new engine default | Compression reduces volume on benchmarks; old beam-search engine deprecated |

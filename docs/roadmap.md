@@ -59,10 +59,18 @@ The beam-search local placer is the blocking bottleneck (see
 annealing, verified macro library (primitive and logic macros), unified 3D A*
 router with pin escape, coarse global routing, PathFinder negotiated
 congestion, conflict learning, redstone validation, and a compression ladder.
-Milestones are M0 benchmarks, M1 placement IR + macros, M2 router, M3
-placement, M4 repair, M5 compression. The IR/mapping/frontend work below is
+Milestones are M0 benchmarks, M1 placement IR + macros, M2 router extraction,
+M3 placement, M4 repair, M5 compression. The IR/mapping/frontend work below is
 preserved; the CAD track replaces only the physical search engine behind the
 `LayoutCandidate` boundary.
+
+M2 is an extraction, not a rewrite: M2.0 moves the existing queue/state/
+expansion into `route_engine/` with identical behavior, M2.1 implements the
+missing `PlaceBound::propagated_from` rules (Torch/Repeater/RedstoneBlock/
+Switch), M2.2 makes the cost model explicit with defaults equal to the current
+costs, and M2.3 introduces the `RouteValidator` interface backed by the
+existing simulator. Congestion, SA feedback, and escape scoring stay out of
+M2.
 
 ### Step 1 - General mapper + target capabilities + mapping policy (DONE)
 
@@ -165,6 +173,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | Step 3b | MappingSpec persistence: JSON, CLI flag, snapshot artifact | 308 non-heavy tests |
 | CAD-M0 | Benchmark set, baseline metrics, oversized-legacy-leaf dispatch fix | 312 non-heavy tests |
 | CAD-M1 | Placement IR + macro model (`MacroTemplate`/`MacroInstance`/`PhysicalNet`/`PinRef`) | 315 non-heavy tests |
+| CAD-docs | Documentation audit: `docs/README.md` index, M2 extraction plan, removed two obsolete notes | 315 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

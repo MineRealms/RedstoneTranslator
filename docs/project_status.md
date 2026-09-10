@@ -1,10 +1,12 @@
 # Project Status Report
 
-> Branch: `cad-refactor` · Base commit: `15294b3` · Date: 2026-09-10
+> Branch: `cad-refactor` · Base commit: `15294b3` · Last update: `79b6ff6` (M1)
+> Date: 2026-09-10
 >
 > This report is the hand-off snapshot before the CAD-style placer refactor.
 > It lists what is complete, what is not, and the precise problem the refactor
-> must solve.
+> must solve. The migration plan lives in `docs/architecture.md`; current
+> progress lives in `docs/roadmap.md`.
 
 ## 1. Environment
 
@@ -76,6 +78,31 @@
 - Constant folding in `prepare_place`
   (`src/transform/logic/fold_constants.rs`) removes identity/absorbing
   operations and constant-fed Or patterns.
+
+### 2.5 CAD refactor progress (branch `cad-refactor`)
+
+- **M0 (commit `40adb27`)**: benchmark set in `test/benchmarks/` plus a
+  lowering metrics harness (`src/ir/benchmarks.rs`) that writes
+  `target/benchmark-baseline.json`. The benchmarks immediately exposed a real
+  bug: flat scalar modules bypassed partitioning, so `dense_or_cone` lowered to
+  a single 100-node leaf. The dispatch now falls back to the general
+  partitioned mapper when a legacy leaf would exceed the placer limit.
+
+  | Benchmark | Leaves | Max prepared nodes |
+  | --- | --- | --- |
+  | `not_chain` | 1 | 3 |
+  | `full_adder` | 1 | 27 |
+  | `dense_or_cone` | 4 | 28 (was 100) |
+  | `fsm_1bit` | 4 | 13 |
+  | `fsm_2bit` | 6 | 29 |
+  | `random_10` | 2 | 27 (was 44) |
+  | `random_40` | 11 | 36 |
+
+- **M1 (commit `79b6ff6`)**: `placement_ir.rs` with `MacroTemplate`
+  (normalized verified layout, pins, escape cells, forbidden cells, halo,
+  rotation set), `MacroInstance`, `PinRef`, `PhysicalNet`, and
+  `PlacementProblem` (composition, instantiation into `World3D`, HPWL).
+- **Next: M2** router core extraction (M2.0-M2.3 in `docs/architecture.md`).
 
 ## 3. What is not complete
 
