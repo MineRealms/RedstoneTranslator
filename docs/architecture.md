@@ -160,8 +160,9 @@ cost = 1.0  * estimated_wire_length        (HPWL over nets)
 - Acceptance: Metropolis criterion with a geometric cooling schedule.
 - Output: top-K placements by cost, converted to `LayoutCandidate`s.
 
-The existing beam-search placer stays available behind a config switch until
-the annealing path passes all benchmarks, then is deprecated.
+The existing beam-search placer stays available behind
+`GlobalPlacementConfig::engine` (`Legacy` by default, `Annealed` selects the
+new path) until the annealing path passes all benchmarks, then is deprecated.
 
 ## 6. Phase 4 — Detailed routing: extract the engine from the existing router
 

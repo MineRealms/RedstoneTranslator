@@ -22,6 +22,13 @@ use crate::world::position::Position;
 
 const GLOBAL_PLACEMENT_MARGIN: usize = 4;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlacementEngine {
+    #[default]
+    Legacy,
+    Annealed,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GlobalPlacementConfig {
     pub spacing: usize,
@@ -29,6 +36,7 @@ pub struct GlobalPlacementConfig {
     pub max_attempts: usize,
     pub cost_weights: PlacementCostWeights,
     pub congestion: RoutingCongestionConfig,
+    pub engine: PlacementEngine,
 }
 
 impl Default for GlobalPlacementConfig {
@@ -39,6 +47,7 @@ impl Default for GlobalPlacementConfig {
             max_attempts: 16,
             cost_weights: PlacementCostWeights::default(),
             congestion: RoutingCongestionConfig::default(),
+            engine: PlacementEngine::default(),
         }
     }
 }

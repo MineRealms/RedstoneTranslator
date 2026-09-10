@@ -1,3 +1,4 @@
+mod annealed;
 pub mod assembly;
 pub mod candidate;
 mod candidate_cache;
@@ -37,6 +38,7 @@ use crate::snapshot::{
     duration_ms, emit_json, emit_nbt, record as record_snapshot, SnapshotEvent, SnapshotProduct,
     SnapshotProductInfo,
 };
+use crate::transform::place_and_route::global_pnr::annealed::placement_candidates_annealed;
 use crate::transform::place_and_route::global_pnr::assembly::assemble_world;
 use crate::transform::place_and_route::global_pnr::candidate::{
     generate_routable_module_candidates_with_progress_label, CandidatePolicySet,
@@ -49,7 +51,7 @@ pub use crate::transform::place_and_route::global_pnr::physical_intent::{
 };
 use crate::transform::place_and_route::global_pnr::placer::{
     place_candidates_on_shelves, placement_candidates_resolved, placement_cost_breakdown_resolved,
-    GlobalPlacementConfig, PlacedModule,
+    GlobalPlacementConfig, PlacedModule, PlacementEngine,
 };
 use crate::transform::place_and_route::global_pnr::policy::{
     GlobalPnrPolicies, GlobalPnrPreset, GlobalSearchBudget,
@@ -1746,14 +1748,30 @@ fn search_layout_combinations(
         ));
         let candidates = select_layout_combination(pools, selection)
             .context("invalid child layout combination")?;
-        let placement_attempts = placement_candidates_resolved(
-            topology,
-            config.physical_intent.as_ref(),
-            &config.heuristic_hooks,
-            &candidates,
-            &config.placement,
-            &config.search.policies.placement_heuristics,
-        )?;
+        let placement_attempts = match config.placement.engine {
+            PlacementEngine::Legacy => placement_candidates_resolved(
+                topology,
+                config.physical_intent.as_ref(),
+                &config.heuristic_hooks,
+                &candidates,
+                &config.placement,
+                &config.search.policies.placement_heuristics,
+            )?,
+            PlacementEngine::Annealed => {
+                let selected = pools
+                    .iter()
+                    .zip(selection)
+                    .map(|(pool, &candidate_index)| {
+                        pool.candidates
+                            .get(candidate_index)
+                            .cloned()
+                            .map(|candidate| (pool.instance_name.clone(), candidate))
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .context("invalid child layout combination")?;
+                placement_candidates_annealed(topology, &selected, &config.placement)?
+            }
+        };
         progress.detail(format!(
             "layout combination {} generated {} placement attempt(s)",
             combination_index + 1,
