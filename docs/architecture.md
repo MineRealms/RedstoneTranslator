@@ -239,17 +239,18 @@ Do not introduce a second signal-mode enum: the existing `PropagateType`
 
 ```rust
 pub struct RouteCostModel {
-    pub step_cost: i32,
-    pub turn_cost: i32,
-    pub repeater_cost: i32,
-    pub low_strength_penalty: i32,
+    pub step_cost: usize,
+    pub turn_cost: usize,
+    pub repeater_cost: usize,
+    pub low_strength_penalty: usize,
 }
 ```
 
-Defaults replicate the current behavior: `step = 1`, `turn = 3`,
-`repeater = 8`, plus the existing low-strength penalty. Congestion stays at
-zero until M4. The model is pluggable, but changing defaults is a separate,
-benchmarked change.
+Parity defaults replicate the historical priority exactly: `step_cost = 1`,
+`turn_cost = 0`, `repeater_cost = 0`, and `low_strength_penalty = 4` applied
+when signal strength is at most two. The turn and repeater terms exist but
+stay zero until a benchmarked change enables them; congestion stays at zero
+until M4.
 
 ### 6.5 Two-level validation
 

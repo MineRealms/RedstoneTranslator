@@ -3,6 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
 
+use super::cost::RouteCostModel;
 use super::state::RouteSearchState;
 use crate::transform::place_and_route::global_pnr::router::GlobalRoutingStrategy;
 use crate::world::position::Position;
@@ -24,11 +25,13 @@ pub(crate) enum RouteSearchQueue {
         heap: BinaryHeap<AStarQueueEntry>,
         next_sequence: usize,
         sink: Position,
+        cost_model: RouteCostModel,
     },
     DirectGreedy {
         entry: Option<AStarQueueEntry>,
         next_sequence: usize,
         sink: Position,
+        cost_model: RouteCostModel,
     },
     GreedyBeam {
         entries: Vec<AStarQueueEntry>,
@@ -36,6 +39,7 @@ pub(crate) enum RouteSearchQueue {
         next_sequence: usize,
         sink: Position,
         variant_seed: u64,
+        cost_model: RouteCostModel,
     },
 }
 
@@ -44,6 +48,7 @@ impl RouteSearchQueue {
         strategy: GlobalRoutingStrategy,
         sink: Position,
         initial_states: Vec<RouteSearchState>,
+        cost_model: RouteCostModel,
     ) -> Self {
         match strategy {
             GlobalRoutingStrategy::BreadthFirst => Self::BreadthFirst(initial_states.into()),
@@ -52,6 +57,7 @@ impl RouteSearchQueue {
                     heap: BinaryHeap::new(),
                     next_sequence: 0,
                     sink,
+                    cost_model,
                 };
                 for state in initial_states {
                     queue.push(state);
@@ -63,6 +69,7 @@ impl RouteSearchQueue {
                     entry: None,
                     next_sequence: 0,
                     sink,
+                    cost_model,
                 };
                 for state in initial_states {
                     queue.push(state);
@@ -80,6 +87,7 @@ impl RouteSearchQueue {
                     next_sequence: 0,
                     sink,
                     variant_seed,
+                    cost_model,
                 };
                 for state in initial_states {
                     queue.push(state);
@@ -112,16 +120,23 @@ impl RouteSearchQueue {
                 heap,
                 next_sequence,
                 sink,
+                cost_model,
             } => {
-                heap.push(AStarQueueEntry::new(state, *sink, *next_sequence));
+                heap.push(AStarQueueEntry::new(
+                    state,
+                    *sink,
+                    *next_sequence,
+                    *cost_model,
+                ));
                 *next_sequence += 1;
             }
             Self::DirectGreedy {
                 entry,
                 next_sequence,
                 sink,
+                cost_model,
             } => {
-                let candidate = AStarQueueEntry::new(state, *sink, *next_sequence);
+                let candidate = AStarQueueEntry::new(state, *sink, *next_sequence, *cost_model);
                 *next_sequence += 1;
                 if entry
                     .as_ref()
@@ -136,12 +151,14 @@ impl RouteSearchQueue {
                 next_sequence,
                 sink,
                 variant_seed,
+                cost_model,
             } => {
                 entries.push(AStarQueueEntry::new_with_variant(
                     state,
                     *sink,
                     *next_sequence,
                     *variant_seed,
+                    *cost_model,
                 ));
                 *next_sequence += 1;
                 if entries.len() > *beam_width {
@@ -163,8 +180,13 @@ pub(crate) struct AStarQueueEntry {
 }
 
 impl AStarQueueEntry {
-    fn new(state: RouteSearchState, sink: Position, sequence: usize) -> Self {
-        Self::new_with_variant(state, sink, sequence, 0)
+    fn new(
+        state: RouteSearchState,
+        sink: Position,
+        sequence: usize,
+        cost_model: RouteCostModel,
+    ) -> Self {
+        Self::new_with_variant(state, sink, sequence, 0, cost_model)
     }
 
     fn new_with_variant(
@@ -172,9 +194,10 @@ impl AStarQueueEntry {
         sink: Position,
         sequence: usize,
         variant_seed: u64,
+        cost_model: RouteCostModel,
     ) -> Self {
         Self {
-            priority: AStarPriority::new(&state, sink, sequence, variant_seed),
+            priority: AStarPriority::new(&state, sink, sequence, variant_seed, cost_model),
             state,
         }
     }
@@ -210,10 +233,16 @@ struct AStarPriority {
 }
 
 impl AStarPriority {
-    fn new(state: &RouteSearchState, sink: Position, sequence: usize, variant_seed: u64) -> Self {
+    fn new(
+        state: &RouteSearchState,
+        sink: Position,
+        sequence: usize,
+        variant_seed: u64,
+        cost_model: RouteCostModel,
+    ) -> Self {
         let route_len = state.route.len().saturating_sub(1);
         let manhattan_to_sink = state.terminal.manhattan_distance(&sink);
-        let low_strength_penalty = usize::from(state.signal_strength <= 2) * 4;
+        let low_strength_penalty = cost_model.low_strength_penalty(state);
         let variant_tie_break = if variant_seed == 0 {
             0
         } else {
@@ -226,12 +255,85 @@ impl AStarPriority {
                 .rotate_left((state.route.len() % 64) as u32)
         };
         Self {
-            estimated_total_cost: route_len + manhattan_to_sink + low_strength_penalty,
+            estimated_total_cost: cost_model.weighted_route_cost(state)
+                + manhattan_to_sink
+                + low_strength_penalty,
             route_len,
             manhattan_to_sink,
             low_strength_penalty,
             variant_tie_break,
             sequence,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transform::place_and_route::global_pnr::route_engine::state::PoweredRouteSource;
+    use crate::world::block::{Block, BlockKind, Direction};
+    use crate::world::position::DimSize;
+    use crate::world::World3D;
+
+    fn state(route: Vec<Position>) -> RouteSearchState {
+        let mut world = World3D::new(DimSize(4, 4, 4));
+        for position in &route {
+            world[*position] = Block {
+                kind: BlockKind::Redstone {
+                    on_count: 0,
+                    state: 0,
+                    strength: 0,
+                },
+                direction: Direction::None,
+            };
+        }
+        RouteSearchState {
+            world,
+            terminal: *route.last().unwrap(),
+            route,
+            signal_strength: 15,
+            powered_taps: vec![PoweredRouteSource {
+                position: Position(0, 0, 0),
+                strength: 15,
+            }],
+            pending_bounds: None,
+        }
+    }
+
+    #[test]
+    fn default_cost_model_preserves_the_legacy_priority() {
+        let state = state(vec![Position(0, 0, 0), Position(1, 0, 0)]);
+        let priority =
+            AStarPriority::new(&state, Position(2, 0, 0), 3, 0, RouteCostModel::default());
+
+        assert_eq!(priority.estimated_total_cost, 2);
+        assert_eq!(priority.route_len, 1);
+        assert_eq!(priority.low_strength_penalty, 0);
+    }
+
+    #[test]
+    fn turn_cost_reorders_zigzag_behind_straight_route() {
+        let straight = state(vec![
+            Position(0, 0, 0),
+            Position(1, 0, 0),
+            Position(2, 0, 0),
+            Position(3, 0, 0),
+        ]);
+        let zigzag = state(vec![
+            Position(0, 0, 0),
+            Position(1, 0, 0),
+            Position(1, 1, 0),
+            Position(2, 1, 0),
+        ]);
+        let sink = Position(3, 0, 0);
+        let model = RouteCostModel {
+            turn_cost: 3,
+            ..Default::default()
+        };
+
+        let straight_priority = AStarPriority::new(&straight, sink, 0, 0, model);
+        let zigzag_priority = AStarPriority::new(&zigzag, sink, 0, 0, model);
+
+        assert!(straight_priority.estimated_total_cost < zigzag_priority.estimated_total_cost);
     }
 }

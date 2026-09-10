@@ -4,6 +4,7 @@
 //! identical while `router.rs` keeps net ordering, fanout handling, topology
 //! orchestration, and simulator validation.
 
+mod cost;
 mod engine;
 mod goal;
 mod queue;

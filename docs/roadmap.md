@@ -176,6 +176,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-docs | Documentation audit: `docs/README.md` index, M2 extraction plan, removed two obsolete notes | 315 non-heavy tests |
 | CAD-M2.0 | Point-to-point router core extracted into `route_engine/` (state, queue, goal, engine); behavior-equivalent | 315 non-heavy tests |
 | CAD-M2.1 | Reverse propagation rules completed for torch, repeater, redstone block, and switch | 319 non-heavy tests |
+| CAD-M2.2 | Explicit `RouteCostModel` threaded through the search queue; parity defaults keep the legacy priority | 324 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use super::cost::RouteCostModel;
 use super::goal::RouteGoal;
 use super::queue::{route_expansion_limit, RouteSearchQueue};
 use super::state::{
@@ -42,13 +43,7 @@ pub fn route_point_to_point_with_strategy(
     sink: Position,
     strategy: GlobalRoutingStrategy,
 ) -> Result<(RoutedNet, World3D), RouteFailure> {
-    route_point_to_point_with_strategy_and_allowed_contacts(
-        world,
-        source,
-        sink,
-        strategy,
-        Vec::new(),
-    )
+    route_point_to_point_with_cost_model(world, source, sink, strategy, RouteCostModel::default())
 }
 
 pub(crate) fn route_point_to_point_with_strategy_and_allowed_contacts(
@@ -87,6 +82,7 @@ pub(crate) fn route_point_to_point_with_strategy_and_allowed_contacts_and_initia
         strategy,
         &additional_allowed_contacts,
         initial_strength,
+        RouteCostModel::default(),
     )
     .or_else(|_| {
         route_point_to_point_with_bounds_and_initial_strength(
@@ -99,6 +95,7 @@ pub(crate) fn route_point_to_point_with_strategy_and_allowed_contacts_and_initia
             strategy,
             &additional_allowed_contacts,
             initial_strength,
+            RouteCostModel::default(),
         )
     })
 }
@@ -523,6 +520,7 @@ fn route_point_to_point_with_bounds_and_initial_strength(
     strategy: GlobalRoutingStrategy,
     additional_allowed_contacts: &[Position],
     initial_strength: usize,
+    cost_model: RouteCostModel,
 ) -> Result<(RoutedNet, World3D), RouteFailure> {
     route_point_to_point_with_initial_queue(
         world,
@@ -544,6 +542,7 @@ fn route_point_to_point_with_bounds_and_initial_strength(
         }],
         strategy,
         additional_allowed_contacts,
+        cost_model,
     )
 }
 
@@ -554,6 +553,57 @@ pub(crate) fn route_point_to_point_from_initial_state(
     initial_state: RouteSearchState,
     strategy: GlobalRoutingStrategy,
     additional_allowed_contacts: &[Position],
+) -> Result<(RoutedNet, World3D), RouteFailure> {
+    route_point_to_point_from_initial_state_with_cost(
+        world,
+        source,
+        sink,
+        initial_state,
+        strategy,
+        additional_allowed_contacts,
+        RouteCostModel::default(),
+    )
+}
+
+pub(crate) fn route_point_to_point_with_cost_model(
+    world: &World3D,
+    source: Position,
+    sink: Position,
+    strategy: GlobalRoutingStrategy,
+    cost_model: RouteCostModel,
+) -> Result<(RoutedNet, World3D), RouteFailure> {
+    let initial_strength = initial_signal_strength(world, source);
+    let initial_state = RouteSearchState {
+        world: world.clone(),
+        terminal: source,
+        route: vec![source],
+        signal_strength: initial_strength,
+        powered_taps: vec![PoweredRouteSource {
+            position: source,
+            strength: initial_strength,
+        }],
+        pending_bounds: None,
+    };
+
+    route_point_to_point_from_initial_state_with_cost(
+        world,
+        source,
+        sink,
+        initial_state,
+        strategy,
+        &[],
+        cost_model,
+    )
+}
+
+fn route_point_to_point_from_initial_state_with_cost(
+    world: &World3D,
+    source: Position,
+    sink: Position,
+    initial_state: RouteSearchState,
+    strategy: GlobalRoutingStrategy,
+    additional_allowed_contacts: &[Position],
+    cost_model: RouteCostModel,
 ) -> Result<(RoutedNet, World3D), RouteFailure> {
     let goal = RouteGoal::for_sink(world, sink);
     route_point_to_point_with_initial_queue(
@@ -566,6 +616,7 @@ pub(crate) fn route_point_to_point_from_initial_state(
         vec![initial_state.clone()],
         strategy,
         additional_allowed_contacts,
+        cost_model,
     )
     .or_else(|_| {
         route_point_to_point_with_initial_queue(
@@ -578,6 +629,7 @@ pub(crate) fn route_point_to_point_from_initial_state(
             vec![initial_state],
             strategy,
             additional_allowed_contacts,
+            cost_model,
         )
     })
 }
@@ -592,12 +644,13 @@ fn route_point_to_point_with_initial_queue(
     initial_states: Vec<RouteSearchState>,
     strategy: GlobalRoutingStrategy,
     additional_allowed_contacts: &[Position],
+    cost_model: RouteCostModel,
 ) -> Result<(RoutedNet, World3D), RouteFailure> {
     let initial_visited = initial_states
         .iter()
         .map(|state| route_visited_key(strategy, state));
     let mut visited = initial_visited.collect::<HashSet<_>>();
-    let mut queue = RouteSearchQueue::new(strategy, sink, initial_states);
+    let mut queue = RouteSearchQueue::new(strategy, sink, initial_states, cost_model);
     let forbidden_signal_contacts = route_forbidden_signal_contact_positions(
         original_world,
         source,
