@@ -9,9 +9,14 @@ pub enum Token {
     Assign,
     Always,
     Posedge,
+    Negedge,
     Begin,
     End,
     If,
+    Else,
+    Case,
+    Endcase,
+    Default,
     Ident(String),
     Number(usize),
     LParen,
@@ -23,6 +28,8 @@ pub enum Token {
     Semi,
     Colon,
     Eq,
+    EqEq,
+    NotEq,
     Le,
     At,
     Star,
@@ -55,6 +62,16 @@ pub fn lex(source: &str) -> eyre::Result<Vec<Token>> {
             ',' => tokens.push(Token::Comma),
             ';' => tokens.push(Token::Semi),
             ':' => tokens.push(Token::Colon),
+            '=' if chars.get(index + 1) == Some(&'=') => {
+                tokens.push(Token::EqEq);
+                index += 2;
+                continue;
+            }
+            '!' if chars.get(index + 1) == Some(&'=') => {
+                tokens.push(Token::NotEq);
+                index += 2;
+                continue;
+            }
             '=' => tokens.push(Token::Eq),
             '@' => tokens.push(Token::At),
             '~' => tokens.push(Token::Not),
@@ -95,9 +112,14 @@ pub fn lex(source: &str) -> eyre::Result<Vec<Token>> {
                     "assign" => Token::Assign,
                     "always" => Token::Always,
                     "posedge" => Token::Posedge,
+                    "negedge" => Token::Negedge,
                     "begin" => Token::Begin,
                     "end" => Token::End,
                     "if" => Token::If,
+                    "else" => Token::Else,
+                    "case" => Token::Case,
+                    "endcase" => Token::Endcase,
+                    "default" => Token::Default,
                     _ => Token::Ident(text),
                 });
                 continue;

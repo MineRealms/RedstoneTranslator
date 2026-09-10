@@ -98,6 +98,11 @@ pub enum RoutableNodeKind {
     Input {
         name: String,
     },
+    /// A constant source. The physical flow places `true` as a redstone block;
+    /// lowering expands `false` into `not(constant true)`.
+    Constant {
+        value: bool,
+    },
     Output {
         name: String,
     },
@@ -423,7 +428,9 @@ fn validate_endpoint(
 
 fn validate_node_arity(node: &RoutableNode) -> eyre::Result<()> {
     let valid = match &node.kind {
-        RoutableNodeKind::Input { .. } => node.inputs.is_empty(),
+        RoutableNodeKind::Input { .. } | RoutableNodeKind::Constant { .. } => {
+            node.inputs.is_empty()
+        }
         RoutableNodeKind::Output { .. } | RoutableNodeKind::Not => node.inputs.len() == 1,
         RoutableNodeKind::And | RoutableNodeKind::Or | RoutableNodeKind::Xor => {
             node.inputs.len() >= 2

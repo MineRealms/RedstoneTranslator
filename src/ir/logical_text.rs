@@ -163,13 +163,16 @@ fn write_module(output: &mut fmt::Formatter<'_>, module: &LogicalModule) -> fmt:
 fn write_value(output: &mut fmt::Formatter<'_>, value: &LogicalValue) -> fmt::Result {
     match value {
         LogicalValue::Net { net } => write!(output, "{}", name(net)),
+        LogicalValue::Slice { net, bit } => write!(output, "{}[{}]", name(net), bit),
         LogicalValue::Constant { value, width } => write!(output, "const<{width}>({value})"),
     }
 }
 
 fn cell_width(cell: &LogicalCell, net_widths: &std::collections::HashMap<&str, usize>) -> usize {
     match cell.kind {
-        LogicalCellKind::DLatch { width } | LogicalCellKind::Register { width, .. } => width,
+        LogicalCellKind::DLatch { width }
+        | LogicalCellKind::Register { width, .. }
+        | LogicalCellKind::Eq { width } => width,
         LogicalCellKind::Dff { .. } => 1,
         _ => cell
             .outputs
@@ -185,7 +188,8 @@ fn pin_rank(kind: &LogicalCellKind, pin: &str) -> usize {
         LogicalCellKind::And
         | LogicalCellKind::Or
         | LogicalCellKind::Xor
-        | LogicalCellKind::Add => &["lhs", "rhs"],
+        | LogicalCellKind::Add
+        | LogicalCellKind::Eq { .. } => &["lhs", "rhs"],
         LogicalCellKind::Mux => &["select", "when_false", "when_true"],
         LogicalCellKind::DLatch { .. } => &["d", "enable"],
         LogicalCellKind::Dff { .. } | LogicalCellKind::Register { .. } => &["d", "clock"],
@@ -251,6 +255,7 @@ fn operation_name(kind: &LogicalCellKind) -> &'static str {
         LogicalCellKind::And => "and",
         LogicalCellKind::Or => "or",
         LogicalCellKind::Xor => "xor",
+        LogicalCellKind::Eq { .. } => "eq",
         LogicalCellKind::Add => "add",
         LogicalCellKind::Inc => "inc",
         LogicalCellKind::Mux => "mux",
@@ -424,6 +429,7 @@ impl Parser {
             "and" => LogicalCellKind::And,
             "or" => LogicalCellKind::Or,
             "xor" => LogicalCellKind::Xor,
+            "eq" => LogicalCellKind::Eq { width },
             "add" => LogicalCellKind::Add,
             "inc" => LogicalCellKind::Inc,
             "mux" => LogicalCellKind::Mux,
@@ -469,9 +475,13 @@ impl Parser {
             self.expect_symbol(')')?;
             return Ok(LogicalValue::Constant { value, width });
         }
-        Ok(LogicalValue::Net {
-            net: self.expect_name()?,
-        })
+        let net = self.expect_name()?;
+        if self.consume_symbol('[') {
+            let bit = self.expect_usize()?;
+            self.expect_symbol(']')?;
+            return Ok(LogicalValue::Slice { net, bit });
+        }
+        Ok(LogicalValue::Net { net })
     }
 
     fn parse_edge(&mut self) -> eyre::Result<ClockEdge> {

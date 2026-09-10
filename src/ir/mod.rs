@@ -5,9 +5,11 @@ pub mod logical;
 mod logical_adapter;
 mod logical_lowering;
 mod logical_text;
+mod mapping;
 pub mod pnr;
 pub mod routable;
 mod syntax;
+pub mod target;
 mod text;
 
 use std::fmt;
@@ -30,6 +32,9 @@ pub use routable::{
     Endpoint, NetClass, RoutableDesign, RoutableInstance, RoutableModule, RoutableModuleBody,
     RoutableNet, RoutableNode, RoutableNodeKind, RoutablePort, RoutablePortDirection,
     RoutableSequentialPrimitive, ROUTABLE_IR_TARGET, ROUTABLE_IR_VERSION,
+};
+pub use target::{
+    AdderMapping, MappingPolicy, MuxMapping, RegisterMapping, TargetOp, TargetSpec, XorMapping,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]

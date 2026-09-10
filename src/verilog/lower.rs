@@ -84,6 +84,10 @@ fn rewrite_expr(
 ) -> Expr {
     match expr {
         Expr::Ident(name) => Expr::Ident(rewrite_signal(name, instance_prefix, substitutions)),
+        Expr::Slice { name, bit } => Expr::Ident(format!(
+            "{}_{bit}",
+            rewrite_signal(name, instance_prefix, substitutions)
+        )),
         Expr::Number(value) => Expr::Number(*value),
         Expr::Not(expr) => Expr::Not(Box::new(rewrite_expr(expr, instance_prefix, substitutions))),
         Expr::Binary { op, left, right } => Expr::Binary {

@@ -26,6 +26,7 @@ pub enum PortDirection {
     Input,
     Output,
     OutputReg,
+    Reg,
     Wire,
 }
 
@@ -52,13 +53,22 @@ pub struct AlwaysBlock {
 pub enum AlwaysSensitivity {
     Any,
     Posedge(String),
+    Negedge(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AlwaysStmt {
+    /// A `begin ... end` list with more than one statement. Single-statement
+    /// blocks are normalized to the contained statement.
+    Block(Vec<AlwaysStmt>),
     If {
-        condition: String,
+        condition: Expr,
         then_branch: Box<AlwaysStmt>,
+        else_branch: Option<Box<AlwaysStmt>>,
+    },
+    Case {
+        selector: String,
+        arms: Vec<CaseArm>,
     },
     NonBlockingAssign {
         output: String,
@@ -67,8 +77,20 @@ pub enum AlwaysStmt {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaseArm {
+    /// Decimal case patterns. Empty for a `default` arm.
+    pub patterns: Vec<usize>,
+    pub is_default: bool,
+    pub body: AlwaysStmt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Ident(String),
+    Slice {
+        name: String,
+        bit: usize,
+    },
     Number(usize),
     Not(Box<Expr>),
     Binary {
@@ -84,12 +106,15 @@ pub enum BinaryOp {
     And,
     Xor,
     Or,
+    Eq,
+    Ne,
 }
 
 impl Expr {
     pub fn to_logic_stmt(&self) -> String {
         match self {
             Expr::Ident(name) => name.clone(),
+            Expr::Slice { name, bit } => format!("{name}[{bit}]"),
             Expr::Number(value) => value.to_string(),
             Expr::Not(expr) => format!("~({})", expr.to_logic_stmt()),
             Expr::Binary { op, left, right } => {
@@ -98,6 +123,8 @@ impl Expr {
                     BinaryOp::And => "&",
                     BinaryOp::Xor => "^",
                     BinaryOp::Or => "|",
+                    BinaryOp::Eq => "==",
+                    BinaryOp::Ne => "!=",
                 };
                 format!("({}{}{})", left.to_logic_stmt(), op, right.to_logic_stmt())
             }

@@ -70,8 +70,18 @@ pub struct LogicalOutput {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LogicalValue {
-    Net { net: String },
-    Constant { value: u128, width: usize },
+    Net {
+        net: String,
+    },
+    /// One selected bit of a declared logical net.
+    Slice {
+        net: String,
+        bit: usize,
+    },
+    Constant {
+        value: u128,
+        width: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,12 +92,23 @@ pub enum LogicalCellKind {
     And,
     Or,
     Xor,
+    /// One-bit equality of two same-width operands.
+    Eq {
+        width: usize,
+    },
     Add,
     Inc,
     Mux,
-    DLatch { width: usize },
-    Dff { edge: ClockEdge },
-    Register { width: usize, edge: ClockEdge },
+    DLatch {
+        width: usize,
+    },
+    Dff {
+        edge: ClockEdge,
+    },
+    Register {
+        width: usize,
+        edge: ClockEdge,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -307,6 +328,7 @@ impl LogicalModule {
             }
             let inputs = cell.inputs.iter().filter_map(|input| match &input.value {
                 LogicalValue::Net { net } => Some(net.as_str()),
+                LogicalValue::Slice { net, .. } => Some(net.as_str()),
                 LogicalValue::Constant { .. } => None,
             });
             for input in inputs {
@@ -404,6 +426,20 @@ impl LogicalCell {
                 ensure_data_width(self.input_value("lhs")?, output_width, nets)?;
                 ensure_data_width(self.input_value("rhs")?, output_width, nets)?;
             }
+            LogicalCellKind::Eq { width } => {
+                if output_width != 1 {
+                    eyre::bail!("eq cell `{}` result must be one bit", self.name);
+                }
+                let lhs_width = value_width(self.input_value("lhs")?, nets)?;
+                let rhs_width = value_width(self.input_value("rhs")?, nets)?;
+                if lhs_width != *width || rhs_width > *width {
+                    eyre::bail!(
+                        "eq cell `{}` expects a {width}-bit lhs and an at most {width}-bit rhs, \
+                         found {lhs_width} and {rhs_width}",
+                        self.name
+                    );
+                }
+            }
             LogicalCellKind::Mux => {
                 ensure_exact_width(self.input_value("select")?, 1, nets, "mux select")?;
                 ensure_data_width(self.input_value("when_true")?, output_width, nets)?;
@@ -464,7 +500,9 @@ impl LogicalCellKind {
     fn pin_names(&self) -> (&'static [&'static str], &'static [&'static str]) {
         match self {
             Self::Buffer | Self::Not => (&["value"], &["result"]),
-            Self::And | Self::Or | Self::Xor | Self::Add => (&["lhs", "rhs"], &["result"]),
+            Self::And | Self::Or | Self::Xor | Self::Add | Self::Eq { .. } => {
+                (&["lhs", "rhs"], &["result"])
+            }
             Self::Inc => (&["value"], &["result"]),
             Self::Mux => (&["select", "when_true", "when_false"], &["result"]),
             Self::DLatch { .. } => (&["d", "enable"], &["q"]),
@@ -478,6 +516,17 @@ fn validate_value(value: &LogicalValue, nets: &HashMap<&str, &LogicalNet>) -> ey
         LogicalValue::Net { net } => {
             nets.get(net.as_str())
                 .with_context(|| format!("unknown logical net `{net}`"))?;
+        }
+        LogicalValue::Slice { net, bit } => {
+            let width = nets
+                .get(net.as_str())
+                .with_context(|| format!("unknown logical net `{net}`"))?
+                .width;
+            if *bit >= width {
+                eyre::bail!(
+                    "slice bit {bit} is out of range for logical net `{net}` of width {width}"
+                );
+            }
         }
         LogicalValue::Constant { value, width } => {
             if *width == 0 {
@@ -497,6 +546,7 @@ fn value_width(value: &LogicalValue, nets: &HashMap<&str, &LogicalNet>) -> eyre:
             .get(net.as_str())
             .with_context(|| format!("unknown logical net `{net}`"))?
             .width),
+        LogicalValue::Slice { .. } => Ok(1),
         LogicalValue::Constant { width, .. } => Ok(*width),
     }
 }
@@ -508,7 +558,7 @@ fn ensure_data_width(
 ) -> eyre::Result<()> {
     let width = value_width(value, nets)?;
     let compatible = match value {
-        LogicalValue::Net { .. } => width == output_width,
+        LogicalValue::Net { .. } | LogicalValue::Slice { .. } => width == output_width,
         LogicalValue::Constant { .. } => width <= output_width,
     };
     if !compatible {

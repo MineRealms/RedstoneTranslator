@@ -157,6 +157,7 @@ impl LogicGraphTransformer {
 
             let expression = match &node.kind {
                 GraphNodeKind::Input(name) => format!("Input({name})"),
+                GraphNodeKind::Constant(value) => format!("Constant({value})"),
                 GraphNodeKind::Logic(logic) => {
                     let mut inputs = node
                         .inputs

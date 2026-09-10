@@ -205,6 +205,7 @@ impl LogicTruthTable {
                 let node = graph.find_node_by_id(node_id).unwrap();
                 let value = match &node.kind {
                     GraphNodeKind::Input(_) => continue,
+                    GraphNodeKind::Constant(value) => *value,
                     GraphNodeKind::Logic(logic) => match logic.logic_type {
                         LogicType::Not => !values[&node.inputs[0]],
                         LogicType::And => node.inputs.iter().all(|input| values[input]),

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashMap;
 
 use eyre::{ContextCompat, WrapErr};
 
@@ -6,10 +6,16 @@ use super::logical::{
     ClockEdge, LogicalCell, LogicalCellKind, LogicalDesign, LogicalModule, LogicalPortDirection,
     LogicalValue,
 };
+use super::mapping::{
+    bit_signal_name, classify_logical_net, combinational_output_module, composite_module,
+    d_latch_routable_module, finish_design, instance_port, logical_ports, lower_flat_module,
+    module_is_simple_state_design, not_clock_module, requires_general_flat_lowering,
+    routable_leaf_from_graph, self_port, single_endpoint, NetConnections,
+};
+use super::target::{MappingPolicy, TargetSpec};
 use super::{
-    Endpoint, NetClass, RoutableDesign, RoutableInstance, RoutableModule, RoutableModuleBody,
-    RoutableNet, RoutableNode, RoutableNodeKind, RoutablePort, RoutablePortDirection,
-    RoutableSequentialPrimitive, ROUTABLE_IR_TARGET, ROUTABLE_IR_VERSION,
+    Endpoint, NetClass, RoutableDesign, RoutableModule, RoutableNet, RoutablePortDirection,
+    ROUTABLE_IR_TARGET,
 };
 use crate::graph::logic::LogicGraph;
 use crate::graph::{Graph, GraphNode, GraphNodeKind};
@@ -19,9 +25,27 @@ use crate::sequential::{SequentialPrimitive, SequentialType};
 /// Lowers the typed logical netlist without reconstructing Verilog syntax.
 ///
 pub(crate) fn lower_logical_to_routable(design: &LogicalDesign) -> eyre::Result<RoutableDesign> {
+    lower_logical_to_routable_with_target(
+        design,
+        &TargetSpec::redstone_v1(),
+        &MappingPolicy::default(),
+    )
+}
+
+/// Lowers a logical design for one explicit target and mapping policy.
+pub(crate) fn lower_logical_to_routable_with_target(
+    design: &LogicalDesign,
+    target: &TargetSpec,
+    policy: &MappingPolicy,
+) -> eyre::Result<RoutableDesign> {
     design.validate()?;
-    let mut routable = lower_logical_design(design)
-        .wrap_err("logical IR uses a construct not yet supported by redstone-v1 mapping")?;
+    policy.validate(target)?;
+    let mut routable = lower_logical_design(design, target, policy).wrap_err_with(|| {
+        format!(
+            "logical IR uses a construct not yet supported by `{}` mapping",
+            target.name()
+        )
+    })?;
     routable.debug = design.debug.clone();
     attach_routable_debug_locations(design, &mut routable);
     Ok(routable)
@@ -185,6 +209,7 @@ fn logical_node_location(
 
     match &node.kind {
         RoutableNodeKind::Input { name } | RoutableNodeKind::Output { name } => net_location(name),
+        RoutableNodeKind::Constant { .. } => None,
         RoutableNodeKind::Not
         | RoutableNodeKind::And
         | RoutableNodeKind::Or
@@ -274,7 +299,11 @@ fn logical_net_location(
     design.debug.get(&logical_entity(&module.name, "net", base))
 }
 
-fn lower_logical_design(design: &LogicalDesign) -> eyre::Result<RoutableDesign> {
+fn lower_logical_design(
+    design: &LogicalDesign,
+    target: &TargetSpec,
+    policy: &MappingPolicy,
+) -> eyre::Result<RoutableDesign> {
     let definitions = design
         .modules
         .iter()
@@ -289,7 +318,15 @@ fn lower_logical_design(design: &LogicalDesign) -> eyre::Result<RoutableDesign> 
         if let Some(state_design) = lower_state_design(top)? {
             return Ok(state_design);
         }
-        return finish_design(&top.name, vec![graph_backed_module(top, &top.name)?]);
+        if requires_general_flat_lowering(top) {
+            return lower_flat_module(top, target, policy);
+        }
+        return match graph_backed_module(top, &top.name) {
+            Ok(module) => finish_design(&top.name, target.name(), vec![module]),
+            Err(scalar_error) => lower_flat_module(top, target, policy).wrap_err_with(|| {
+                format!("legacy scalar leaf lowering failed first: {scalar_error}")
+            }),
+        };
     }
 
     if !top.cells.is_empty() {
@@ -319,7 +356,7 @@ fn lower_logical_design(design: &LogicalDesign) -> eyre::Result<RoutableDesign> 
         modules.push(graph_backed_module(definition, &instance.name)?);
     }
     modules.push(hierarchical_module(top, &definitions)?);
-    finish_design(&top.name, modules)
+    finish_design(&top.name, target.name(), modules)
 }
 
 fn lower_state_design(module: &LogicalModule) -> eyre::Result<Option<RoutableDesign>> {
@@ -331,6 +368,12 @@ fn lower_state_design(module: &LogicalModule) -> eyre::Result<Option<RoutableDes
     let [state] = sequential.as_slice() else {
         return Ok(None);
     };
+    // The legacy special case only covers modules whose entire combinational
+    // logic is the state's next-state cone. Everything else goes to the
+    // general mapper.
+    if !module_is_simple_state_design(module) {
+        return Ok(None);
+    }
 
     let (width, edge) = match state.kind {
         LogicalCellKind::Dff { edge } => (1, edge),
@@ -339,7 +382,7 @@ fn lower_state_design(module: &LogicalModule) -> eyre::Result<Option<RoutableDes
         _ => unreachable!(),
     };
     if edge != ClockEdge::Posedge {
-        eyre::bail!("redstone-v1 currently supports only posedge registers");
+        return Ok(None);
     }
 
     let output = state.output("q")?;
@@ -350,16 +393,13 @@ fn lower_state_design(module: &LogicalModule) -> eyre::Result<Option<RoutableDes
     });
 
     if width > 1 {
-        let driver = driver.with_context(|| {
-            format!(
-                "register `{}` data net `{data}` has no logical driver",
-                state.name
-            )
-        })?;
+        let Some(driver) = driver else {
+            return Ok(None);
+        };
         if !matches!(driver.kind, LogicalCellKind::Inc)
             || net_value(driver.input_value("value")?, "increment input")? != output
         {
-            eyre::bail!("redstone-v1 currently supports only `register <= register + 1`");
+            return Ok(None);
         }
         return register_increment_design(module, output, clock, width).map(Some);
     }
@@ -368,7 +408,7 @@ fn lower_state_design(module: &LogicalModule) -> eyre::Result<Option<RoutableDes
         Some(driver) if matches!(driver.kind, LogicalCellKind::Inc) => {
             let input = net_value(driver.input_value("value")?, "increment input")?;
             if input != output {
-                eyre::bail!("scalar increment must feed back from its register output");
+                return Ok(None);
             }
             format!("~{output}")
         }
@@ -378,7 +418,7 @@ fn lower_state_design(module: &LogicalModule) -> eyre::Result<Option<RoutableDes
         Some(driver) if matches!(driver.kind, LogicalCellKind::Buffer) => {
             net_value(driver.input_value("value")?, "buffer input")?.to_owned()
         }
-        Some(_) => eyre::bail!("unsupported scalar register data operation"),
+        Some(_) => return Ok(None),
         None => data.to_owned(),
     };
     scalar_dff_design(module, output, clock, &next_expr).map(Some)
@@ -471,6 +511,7 @@ fn scalar_dff_design(
     );
     finish_design(
         &logical.name,
+        ROUTABLE_IR_TARGET,
         vec![clock_module, next_module, master_module, slave_module, top],
     )
 }
@@ -563,7 +604,7 @@ fn register_increment_design(
         connections.finish(),
     );
     modules.push(top);
-    finish_design(&logical.name, modules)
+    finish_design(&logical.name, ROUTABLE_IR_TARGET, modules)
 }
 
 fn graph_backed_module(module: &LogicalModule, name: &str) -> eyre::Result<RoutableModule> {
@@ -644,6 +685,15 @@ fn emit_graph_cell(
     let input_node = |pin: &str| -> eyre::Result<Option<usize>> {
         match cell.input_value(pin)? {
             LogicalValue::Net { net } => Ok(producers.get(net).copied()),
+            LogicalValue::Slice { net, bit } => {
+                if *bit != 0 {
+                    eyre::bail!(
+                        "logical slice lowering requires target mapping for cell `{}`",
+                        cell.name
+                    )
+                }
+                Ok(producers.get(net).copied())
+            }
             LogicalValue::Constant { .. } => {
                 eyre::bail!("logical constants are not supported by scalar leaf lowering yet")
             }
@@ -699,6 +749,7 @@ fn emit_graph_cell(
         ),
         LogicalCellKind::Add
         | LogicalCellKind::Inc
+        | LogicalCellKind::Eq { .. }
         | LogicalCellKind::Mux
         | LogicalCellKind::Dff { .. }
         | LogicalCellKind::Register { .. } => {
@@ -807,14 +858,6 @@ fn hierarchical_module(
     ))
 }
 
-fn combinational_output_module(
-    name: &str,
-    expr: &str,
-    output: &str,
-) -> eyre::Result<RoutableModule> {
-    routable_leaf_from_graph(name, LogicGraph::from_stmt(expr, output)?.graph)
-}
-
 fn next_bit_module(name: &str, signal: &str, bit: usize) -> eyre::Result<RoutableModule> {
     let bit_name = bit_signal_name(signal, bit);
     if bit == 0 {
@@ -845,44 +888,6 @@ fn buffered_xor_output_module(
     );
     graph.graph.remove_output(&product);
     routable_leaf_from_graph(name, graph.graph)
-}
-
-fn not_clock_module(name: &str) -> eyre::Result<RoutableModule> {
-    combinational_output_module(name, "~clk", "clk_n")
-}
-
-fn d_latch_routable_module(name: &str) -> RoutableModule {
-    let mut graph = Graph::from_nodes(vec![
-        GraphNode {
-            kind: GraphNodeKind::Input("d".to_owned()),
-            ..Default::default()
-        },
-        GraphNode {
-            kind: GraphNodeKind::Input("en".to_owned()),
-            ..Default::default()
-        },
-        GraphNode {
-            kind: GraphNodeKind::Sequential(SequentialPrimitive::new(
-                SequentialType::DLatch,
-                vec!["d".to_owned(), "en".to_owned()],
-                vec!["q".to_owned()],
-            )),
-            inputs: vec![0, 1],
-            ..Default::default()
-        },
-        GraphNode {
-            kind: GraphNodeKind::Output("q".to_owned()),
-            inputs: vec![2],
-            ..Default::default()
-        },
-    ]);
-    graph.build_outputs();
-    graph.build_producers();
-    graph.build_consumers();
-    graph
-        .verify()
-        .expect("built-in D latch graph must be valid");
-    routable_leaf_from_graph(name, graph).expect("built-in D latch must lower to Routable IR")
 }
 
 #[derive(Clone, Copy)]
@@ -945,10 +950,6 @@ fn carry_expr(signal: &str, bit: usize) -> String {
     }
 }
 
-fn bit_signal_name(signal: &str, bit: usize) -> String {
-    format!("{signal}_{bit}")
-}
-
 fn carry_signal_name(bit: usize) -> String {
     format!("carry_{bit}")
 }
@@ -957,236 +958,10 @@ fn carry_module_name(signal: &str, bit: usize) -> String {
     format!("{signal}_carry_{bit}")
 }
 
-fn single_endpoint(endpoints: Option<&Vec<Endpoint>>) -> Option<Endpoint> {
-    let endpoints = endpoints?;
-    (endpoints.len() == 1).then(|| endpoints[0].clone())
-}
-
-#[derive(Default)]
-struct NetConnections {
-    by_driver: BTreeMap<Endpoint, (String, NetClass, Vec<Endpoint>)>,
-}
-
-impl NetConnections {
-    fn connect(&mut self, preferred_name: &str, class: NetClass, driver: Endpoint, sink: Endpoint) {
-        let entry = self
-            .by_driver
-            .entry(driver)
-            .or_insert_with(|| (preferred_name.to_owned(), class, Vec::new()));
-        if !entry.2.contains(&sink) {
-            entry.2.push(sink);
-        }
-        if class == NetClass::Io {
-            entry.1 = NetClass::Io;
-        }
-    }
-
-    fn finish(self) -> Vec<RoutableNet> {
-        let mut used = HashSet::new();
-        self.by_driver
-            .into_iter()
-            .map(|(driver, (preferred, class, sinks))| {
-                let mut name = preferred.clone();
-                let mut suffix = 1;
-                while !used.insert(name.clone()) {
-                    name = format!("{preferred}_{suffix}");
-                    suffix += 1;
-                }
-                RoutableNet {
-                    name,
-                    class,
-                    driver,
-                    sinks,
-                    origin: None,
-                }
-            })
-            .collect()
-    }
-}
-
-fn self_port(port: &str) -> Endpoint {
-    Endpoint::SelfPort {
-        port: port.to_owned(),
-    }
-}
-
-fn instance_port(instance: &str, port: &str) -> Endpoint {
-    Endpoint::InstancePort {
-        instance: instance.to_owned(),
-        port: port.to_owned(),
-    }
-}
-
-fn logical_ports(module: &LogicalModule) -> eyre::Result<Vec<RoutablePort>> {
-    let mut ports = Vec::new();
-    for port in &module.ports {
-        let width = module
-            .nets
-            .iter()
-            .find(|net| net.name == port.net)
-            .with_context(|| format!("port `{}` references missing net `{}`", port.name, port.net))?
-            .width;
-        let direction = match port.direction {
-            LogicalPortDirection::Input => RoutablePortDirection::Input,
-            LogicalPortDirection::Output => RoutablePortDirection::Output,
-        };
-        if width == 1 {
-            ports.push(RoutablePort {
-                name: port.name.clone(),
-                direction,
-            });
-        } else {
-            ports.extend((0..width).map(|bit| RoutablePort {
-                name: bit_signal_name(&port.name, bit),
-                direction,
-            }));
-        }
-    }
-    Ok(ports)
-}
-
-fn composite_module<I, S>(
-    name: &str,
-    ports: Vec<RoutablePort>,
-    instance_names: I,
-    nets: Vec<RoutableNet>,
-) -> RoutableModule
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<str>,
-{
-    RoutableModule {
-        name: name.to_owned(),
-        ports,
-        body: RoutableModuleBody::Composite {
-            instances: instance_names
-                .into_iter()
-                .map(|name| RoutableInstance {
-                    name: name.as_ref().to_owned(),
-                    module: name.as_ref().to_owned(),
-                    origin: None,
-                })
-                .collect(),
-            nets,
-        },
-    }
-}
-
-fn routable_leaf_from_graph(name: &str, graph: Graph) -> eyre::Result<RoutableModule> {
-    let ports = graph
-        .nodes
-        .iter()
-        .filter_map(|node| match &node.kind {
-            GraphNodeKind::Input(name) => Some(RoutablePort {
-                name: name.clone(),
-                direction: RoutablePortDirection::Input,
-            }),
-            GraphNodeKind::Output(name) => Some(RoutablePort {
-                name: name.clone(),
-                direction: RoutablePortDirection::Output,
-            }),
-            _ => None,
-        })
-        .collect();
-    let nodes = graph
-        .nodes
-        .into_iter()
-        .map(|node| {
-            let kind = match &node.kind {
-                GraphNodeKind::Input(name) => RoutableNodeKind::Input { name: name.clone() },
-                GraphNodeKind::Output(name) => RoutableNodeKind::Output { name: name.clone() },
-                GraphNodeKind::Logic(logic) => match logic.logic_type {
-                    LogicType::Not => RoutableNodeKind::Not,
-                    LogicType::And => RoutableNodeKind::And,
-                    LogicType::Or => RoutableNodeKind::Or,
-                    LogicType::Xor => RoutableNodeKind::Xor,
-                },
-                GraphNodeKind::Sequential(sequential) => RoutableNodeKind::Sequential {
-                    primitive: match sequential.sequential_type {
-                        SequentialType::RsLatch => RoutableSequentialPrimitive::RsLatch,
-                        SequentialType::DLatch => RoutableSequentialPrimitive::DLatch,
-                    },
-                    input_ports: sequential.input_ports.clone(),
-                    output_ports: sequential.output_ports.clone(),
-                },
-                GraphNodeKind::None => eyre::bail!("routable leaf contains unresolved node"),
-                GraphNodeKind::Block(_) => {
-                    eyre::bail!("routable leaf contains physical block node")
-                }
-                GraphNodeKind::Clustered(_) => eyre::bail!("routable leaf contains clustered node"),
-            };
-            Ok(RoutableNode {
-                id: node.id,
-                kind,
-                inputs: node.inputs.clone(),
-                tag: node.tag.clone(),
-            })
-        })
-        .collect::<eyre::Result<Vec<_>>>()?;
-    Ok(RoutableModule {
-        name: name.to_owned(),
-        ports,
-        body: RoutableModuleBody::Leaf { nodes },
-    })
-}
-
-fn finish_design(top: &str, modules: Vec<RoutableModule>) -> eyre::Result<RoutableDesign> {
-    let mut canonical = HashMap::<String, String>::new();
-    let mut deduplicated = Vec::<RoutableModule>::new();
-    for module in modules {
-        let existing = if module.name != top
-            && matches!(module.body, RoutableModuleBody::Leaf { .. })
-        {
-            deduplicated
-                .iter()
-                .find(|candidate| candidate.ports == module.ports && candidate.body == module.body)
-                .map(|candidate| candidate.name.clone())
-        } else {
-            None
-        };
-        if let Some(existing) = existing {
-            canonical.insert(module.name, existing);
-        } else {
-            canonical.insert(module.name.clone(), module.name.clone());
-            deduplicated.push(module);
-        }
-    }
-    for module in &mut deduplicated {
-        if let RoutableModuleBody::Composite { instances, .. } = &mut module.body {
-            for instance in instances {
-                if let Some(name) = canonical.get(&instance.module) {
-                    instance.module = name.clone();
-                }
-            }
-        }
-    }
-    deduplicated.sort_by(|left, right| left.name.cmp(&right.name));
-    let design = RoutableDesign {
-        version: ROUTABLE_IR_VERSION,
-        target: ROUTABLE_IR_TARGET.to_owned(),
-        top: top.to_owned(),
-        modules: deduplicated,
-        debug: Default::default(),
-    };
-    design.validate()?;
-    Ok(design)
-}
-
-fn classify_logical_net(name: &str, is_io: bool) -> NetClass {
-    if is_io {
-        NetClass::Io
-    } else if name.contains("clk") || name.contains("clock") {
-        NetClass::Clock
-    } else if name.contains("reset") || name.starts_with("rst") {
-        NetClass::Reset
-    } else {
-        NetClass::Data
-    }
-}
-
 fn net_value<'a>(value: &'a LogicalValue, role: &str) -> eyre::Result<&'a str> {
     match value {
         LogicalValue::Net { net } => Ok(net),
+        LogicalValue::Slice { .. } => eyre::bail!("{role} must be a plain net"),
         LogicalValue::Constant { .. } => eyre::bail!("{role} must be a net"),
     }
 }

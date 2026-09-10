@@ -25,6 +25,10 @@ pub enum GraphNodeKind {
     #[default]
     None,
     Input(String),
+    /// A constant source placed as a physical redstone block (`true`). The
+    /// mapper expands `false` into `not(constant true)` so the physical flow
+    /// only ever places powered sources.
+    Constant(bool),
     Block(Block),
     Logic(Logic),
     Sequential(SequentialPrimitive),
@@ -37,6 +41,7 @@ impl GraphNodeKind {
         match self {
             GraphNodeKind::None => "None".to_string(),
             GraphNodeKind::Input(input) => format!("Input {input}"),
+            GraphNodeKind::Constant(value) => format!("Constant {value}"),
             GraphNodeKind::Block(block) => block.kind.name(),
             GraphNodeKind::Logic(logic) => logic.logic_type.name(),
             GraphNodeKind::Sequential(sequential) => sequential.name(),
@@ -49,6 +54,13 @@ impl GraphNodeKind {
         match self {
             GraphNodeKind::Input(name) => name,
             _ => unreachable!(),
+        }
+    }
+
+    pub fn as_constant(&self) -> Option<bool> {
+        match self {
+            GraphNodeKind::Constant(value) => Some(*value),
+            _ => None,
         }
     }
 

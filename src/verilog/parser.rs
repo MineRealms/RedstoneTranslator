@@ -1,6 +1,6 @@
 use crate::verilog::ast::{
-    AlwaysBlock, AlwaysSensitivity, AlwaysStmt, Assignment, BinaryOp, Declaration, Expr, Instance,
-    PortDirection, Range, VerilogModule,
+    AlwaysBlock, AlwaysSensitivity, AlwaysStmt, Assignment, BinaryOp, CaseArm, Declaration, Expr,
+    Instance, PortDirection, Range, VerilogModule,
 };
 use crate::verilog::lexer::{lex, Token};
 
@@ -38,17 +38,16 @@ impl Parser {
         self.expect(Token::Module)?;
         let name = self.expect_ident()?;
         self.expect(Token::LParen)?;
-        let ports = self.parse_ident_list()?;
+        let (ports, mut declarations) = self.parse_header_ports()?;
         self.expect(Token::RParen)?;
         self.expect(Token::Semi)?;
 
-        let mut declarations = Vec::new();
         let mut assignments = Vec::new();
         let mut always_blocks = Vec::new();
         let mut instances = Vec::new();
         while !self.consume(&Token::EndModule) {
             match self.peek() {
-                Some(Token::Input) | Some(Token::Output) | Some(Token::Wire) => {
+                Some(Token::Input) | Some(Token::Output) | Some(Token::Wire) | Some(Token::Reg) => {
                     declarations.push(self.parse_declaration()?);
                 }
                 Some(Token::Assign) => assignments.push(self.parse_assignment()?),
@@ -69,6 +68,63 @@ impl Parser {
         })
     }
 
+    /// Parses the module header port list. Supports both the classic
+    /// `(a, b, c)` list and ANSI declarations such as
+    /// `(input a, input [3:0] b, output reg q)`.
+    fn parse_header_ports(&mut self) -> eyre::Result<(Vec<String>, Vec<Declaration>)> {
+        if self.peek() == Some(&Token::RParen) {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        if !matches!(self.peek(), Some(Token::Input) | Some(Token::Output)) {
+            return Ok((self.parse_ident_list()?, Vec::new()));
+        }
+
+        let mut ports = Vec::new();
+        let mut declarations = Vec::new();
+        while self.peek() != Some(&Token::RParen) {
+            let direction = match self.next() {
+                Some(Token::Input) => PortDirection::Input,
+                Some(Token::Output) => {
+                    if self.consume(&Token::Reg) {
+                        PortDirection::OutputReg
+                    } else {
+                        PortDirection::Output
+                    }
+                }
+                Some(token) => eyre::bail!("expected ANSI port direction, got {token:?}"),
+                None => eyre::bail!("expected ANSI port direction"),
+            };
+            let range = self.parse_optional_range()?;
+            let names = self.parse_ansi_ident_list()?;
+            ports.extend(names.iter().cloned());
+            declarations.push(Declaration {
+                direction: Some(direction),
+                range,
+                names,
+            });
+            if !self.consume(&Token::Comma) {
+                break;
+            }
+        }
+        Ok((ports, declarations))
+    }
+
+    /// Parses comma-separated ANSI port names, stopping when the comma is
+    /// followed by another direction keyword.
+    fn parse_ansi_ident_list(&mut self) -> eyre::Result<Vec<String>> {
+        let mut names = vec![self.expect_ident()?];
+        while self.peek() == Some(&Token::Comma)
+            && !matches!(
+                self.tokens.get(self.index + 1),
+                Some(Token::Input) | Some(Token::Output)
+            )
+        {
+            self.index += 1;
+            names.push(self.expect_ident()?);
+        }
+        Ok(names)
+    }
+
     fn parse_declaration(&mut self) -> eyre::Result<Declaration> {
         let direction = match self.next() {
             Some(Token::Input) => PortDirection::Input,
@@ -80,6 +136,7 @@ impl Parser {
                 }
             }
             Some(Token::Wire) => PortDirection::Wire,
+            Some(Token::Reg) => PortDirection::Reg,
             Some(token) => eyre::bail!("expected declaration direction, got {token:?}"),
             None => eyre::bail!("expected declaration direction"),
         };
@@ -126,23 +183,37 @@ impl Parser {
             return Ok(AlwaysSensitivity::Posedge(clock));
         }
 
+        if self.consume(&Token::Negedge) {
+            let clock = self.parse_signal_name()?;
+            self.expect(Token::RParen)?;
+            return Ok(AlwaysSensitivity::Negedge(clock));
+        }
+
         let got = self.peek().cloned();
         eyre::bail!("unsupported always sensitivity: {got:?}")
     }
 
     fn parse_always_stmt(&mut self) -> eyre::Result<AlwaysStmt> {
-        self.expect(Token::Begin)?;
-        let stmt = self.parse_always_stmt_inner()?;
-        self.expect(Token::End)?;
-        Ok(stmt)
+        if self.consume(&Token::Begin) {
+            let mut statements = Vec::new();
+            while !self.consume(&Token::End) {
+                statements.push(self.parse_always_stmt()?);
+            }
+            return Ok(if statements.len() == 1 {
+                statements.remove(0)
+            } else {
+                AlwaysStmt::Block(statements)
+            });
+        }
+        self.parse_always_stmt_inner()
     }
 
     fn parse_always_stmt_inner(&mut self) -> eyre::Result<AlwaysStmt> {
-        // TODO: Extend this to parse a real Verilog procedural statement list.
-        // For now, the design lower only consumes a single `if (...) begin ... end`
-        // latch pattern or a single nonblocking assignment.
         if self.peek() == Some(&Token::If) {
             return self.parse_always_if_stmt();
+        }
+        if self.peek() == Some(&Token::Case) {
+            return self.parse_always_case_stmt();
         }
 
         self.parse_nonblocking_assignment_stmt()
@@ -151,16 +222,55 @@ impl Parser {
     fn parse_always_if_stmt(&mut self) -> eyre::Result<AlwaysStmt> {
         self.expect(Token::If)?;
         self.expect(Token::LParen)?;
-        let condition = self.parse_signal_name()?;
+        let condition = self.parse_expr()?;
         self.expect(Token::RParen)?;
-        self.expect(Token::Begin)?;
-        let then_branch = self.parse_always_stmt_inner()?;
-        self.expect(Token::End)?;
+        let then_branch = self.parse_always_stmt()?;
+        let else_branch = if self.consume(&Token::Else) {
+            Some(Box::new(self.parse_always_stmt()?))
+        } else {
+            None
+        };
 
         Ok(AlwaysStmt::If {
             condition,
             then_branch: Box::new(then_branch),
+            else_branch,
         })
+    }
+
+    fn parse_always_case_stmt(&mut self) -> eyre::Result<AlwaysStmt> {
+        self.expect(Token::Case)?;
+        self.expect(Token::LParen)?;
+        let selector = self.parse_signal_name()?;
+        self.expect(Token::RParen)?;
+
+        let mut arms = Vec::new();
+        while !self.consume(&Token::Endcase) {
+            if self.consume(&Token::Default) {
+                self.expect(Token::Colon)?;
+                let body = self.parse_always_stmt()?;
+                arms.push(CaseArm {
+                    patterns: Vec::new(),
+                    is_default: true,
+                    body,
+                });
+                continue;
+            }
+
+            let mut patterns = vec![self.expect_number()?];
+            while self.consume(&Token::Comma) {
+                patterns.push(self.expect_number()?);
+            }
+            self.expect(Token::Colon)?;
+            let body = self.parse_always_stmt()?;
+            arms.push(CaseArm {
+                patterns,
+                is_default: false,
+                body,
+            });
+        }
+
+        Ok(AlwaysStmt::Case { selector, arms })
     }
 
     fn parse_nonblocking_assignment_stmt(&mut self) -> eyre::Result<AlwaysStmt> {
@@ -237,11 +347,31 @@ impl Parser {
     }
 
     fn parse_and(&mut self) -> eyre::Result<Expr> {
-        let mut expr = self.parse_add()?;
+        let mut expr = self.parse_equality()?;
         while self.consume(&Token::And) {
-            let rhs = self.parse_add()?;
+            let rhs = self.parse_equality()?;
             expr = Expr::Binary {
                 op: BinaryOp::And,
+                left: Box::new(expr),
+                right: Box::new(rhs),
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_equality(&mut self) -> eyre::Result<Expr> {
+        let mut expr = self.parse_add()?;
+        loop {
+            let op = if self.consume(&Token::EqEq) {
+                BinaryOp::Eq
+            } else if self.consume(&Token::NotEq) {
+                BinaryOp::Ne
+            } else {
+                break;
+            };
+            let rhs = self.parse_add()?;
+            expr = Expr::Binary {
+                op,
                 left: Box::new(expr),
                 right: Box::new(rhs),
             };
@@ -273,8 +403,13 @@ impl Parser {
     fn parse_primary(&mut self) -> eyre::Result<Expr> {
         match self.next() {
             Some(Token::Ident(name)) => {
-                let name = self.finish_signal_name(name)?;
-                Ok(Expr::Ident(name))
+                if self.consume(&Token::LBracket) {
+                    let bit = self.expect_number()?;
+                    self.expect(Token::RBracket)?;
+                    Ok(Expr::Slice { name, bit })
+                } else {
+                    Ok(Expr::Ident(name))
+                }
             }
             Some(Token::Number(value)) => Ok(Expr::Number(value)),
             Some(Token::LParen) => {
@@ -416,6 +551,37 @@ mod tests {
     }
 
     #[test]
+    fn parses_ansi_style_ports() -> eyre::Result<()> {
+        let module = parse_module(
+            r#"
+            module ansi(input clk, input a, input [3:0] b, output reg q, output y);
+              assign y = a & q;
+              always @(posedge clk) begin
+                q <= a;
+              end
+            endmodule
+            "#,
+        )?;
+
+        assert_eq!(module.ports, vec!["clk", "a", "b", "q", "y"]);
+        assert_eq!(module.declarations.len(), 5);
+        assert_eq!(module.declarations[2].direction, Some(PortDirection::Input));
+        assert_eq!(
+            module.declarations[2]
+                .range
+                .as_ref()
+                .map(|r| (r.msb, r.lsb)),
+            Some((3, 0))
+        );
+        assert_eq!(
+            module.declarations[3].direction,
+            Some(PortDirection::OutputReg)
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn parses_verilog_operator_precedence() -> eyre::Result<()> {
         let module = parse_module(
             r#"
@@ -457,11 +623,12 @@ mod tests {
         assert_eq!(
             module.always_blocks[0].body,
             AlwaysStmt::If {
-                condition: "en".to_owned(),
+                condition: Expr::Ident("en".to_owned()),
                 then_branch: Box::new(AlwaysStmt::NonBlockingAssign {
                     output: "q".to_owned(),
                     data: Expr::Ident("d".to_owned())
-                })
+                }),
+                else_branch: None,
             }
         );
 
@@ -486,7 +653,7 @@ mod tests {
             .expect("expected parsed vector range");
         assert_eq!(range.msb, 3);
         assert_eq!(range.lsb, 0);
-        assert_eq!(module.assignments[0].expr.to_logic_stmt(), "a_0");
+        assert_eq!(module.assignments[0].expr.to_logic_stmt(), "a[0]");
 
         Ok(())
     }

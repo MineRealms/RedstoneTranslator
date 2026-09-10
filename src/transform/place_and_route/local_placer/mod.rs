@@ -89,9 +89,19 @@ impl LocalPlacer {
         for node_id in &self.graph.nodes {
             let kind = &self.graph.find_node_by_id(node_id.id).unwrap().kind;
             ensure!(
-                kind.is_input() || kind.is_output() || kind.is_logic() || kind.is_sequential(),
+                kind.is_input()
+                    || kind.is_output()
+                    || kind.is_logic()
+                    || kind.is_sequential()
+                    || matches!(kind, GraphNodeKind::Constant(_)),
                 "cannot place"
             );
+            if let Some(value) = kind.as_constant() {
+                ensure!(
+                    value,
+                    "constant false must be lowered through an inverter before local placement"
+                );
+            }
             if let Some(logic) = kind.as_logic() {
                 ensure!(logic.is_not() || logic.is_or(), "cannot place");
             }
@@ -449,6 +459,16 @@ impl LocalPlacer {
                         .collect()
                 }
             }
+            GraphNodeKind::Constant(_) => constant_node_kind()
+                .into_iter()
+                .flat_map(|kind| generate_constant_placements(&self.config, &world, kind))
+                .map(|(world, position)| {
+                    let mut state = state.clone();
+                    state.set_node_position(node.id, position);
+                    state.set_signal_footprint(node.id, [position]);
+                    (world, state)
+                })
+                .collect(),
             GraphNodeKind::Output(_) if self.config.materialize_outputs => {
                 generate_output_routes(&world, state[&node.inputs[0]])
                     .into_iter()

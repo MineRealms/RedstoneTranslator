@@ -7,10 +7,10 @@ use crate::verilog::ast::{
     Assignment as AstAssignment, Expr as AstExpr, PortDirection, VerilogModule,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RtlSignalId(pub usize);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RtlSignalRef {
     pub signal: RtlSignalId,
 }
@@ -53,6 +53,7 @@ pub struct RtlProcess {
 pub enum RtlSensitivity {
     Combinational,
     Posedge(RtlSignalRef),
+    Negedge(RtlSignalRef),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +79,10 @@ pub enum RtlAssignKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtlExpr {
     Signal(RtlSignalRef),
+    Slice {
+        signal: RtlSignalRef,
+        bit: usize,
+    },
     Const {
         value: usize,
         width: usize,
@@ -92,6 +97,8 @@ pub enum RtlExpr {
     And(Box<RtlExpr>, Box<RtlExpr>),
     Or(Box<RtlExpr>, Box<RtlExpr>),
     Xor(Box<RtlExpr>, Box<RtlExpr>),
+    /// One-bit equality comparison of two equally wide operands.
+    Eq(Box<RtlExpr>, Box<RtlExpr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,10 +194,13 @@ pub fn lower_rtl_module(module: &VerilogModule) -> eyre::Result<RtlModule> {
                 AstAlwaysSensitivity::Posedge(clock) => {
                     RtlSensitivity::Posedge(signal_ref(clock, &signal_index)?)
                 }
+                AstAlwaysSensitivity::Negedge(clock) => {
+                    RtlSensitivity::Negedge(signal_ref(clock, &signal_index)?)
+                }
             };
             Ok(RtlProcess {
                 sensitivity,
-                statements: vec![lower_always_stmt(&always.body, &signal_index)?],
+                statements: lower_always_stmts(&always.body, &signal_index, &signals)?,
             })
         })
         .collect::<eyre::Result<Vec<_>>>()?;
@@ -210,7 +220,7 @@ fn rtl_signal_kind(direction: Option<PortDirection>) -> eyre::Result<RtlSignalKi
         Some(PortDirection::Input) => Ok(RtlSignalKind::Input),
         Some(PortDirection::Output) => Ok(RtlSignalKind::Output),
         Some(PortDirection::OutputReg) => Ok(RtlSignalKind::RegOutput),
-        Some(PortDirection::Wire) => Ok(RtlSignalKind::Wire),
+        Some(PortDirection::Reg) | Some(PortDirection::Wire) => Ok(RtlSignalKind::Wire),
         None => eyre::bail!("RTL declaration is missing a direction"),
     }
 }
@@ -225,25 +235,86 @@ fn lower_continuous_assign(
     })
 }
 
-fn lower_always_stmt(
+fn lower_always_stmts(
     stmt: &AstAlwaysStmt,
     signal_index: &HashMap<String, RtlSignalId>,
-) -> eyre::Result<RtlStmt> {
+    signals: &[RtlSignal],
+) -> eyre::Result<Vec<RtlStmt>> {
     match stmt {
+        AstAlwaysStmt::Block(statements) => {
+            let mut lowered = Vec::new();
+            for statement in statements {
+                lowered.extend(lower_always_stmts(statement, signal_index, signals)?);
+            }
+            Ok(lowered)
+        }
         AstAlwaysStmt::If {
             condition,
             then_branch,
-        } => Ok(RtlStmt::If {
-            condition: signal_expr(condition, signal_index)?,
-            then_branch: vec![lower_always_stmt(then_branch, signal_index)?],
-            else_branch: Vec::new(),
-        }),
-        AstAlwaysStmt::NonBlockingAssign { output, data } => Ok(RtlStmt::Assign {
+            else_branch,
+        } => Ok(vec![RtlStmt::If {
+            condition: lower_expr(condition, signal_index)?,
+            then_branch: lower_always_stmts(then_branch, signal_index, signals)?,
+            else_branch: match else_branch {
+                Some(else_branch) => lower_always_stmts(else_branch, signal_index, signals)?,
+                None => Vec::new(),
+            },
+        }]),
+        AstAlwaysStmt::Case { selector, arms } => {
+            expand_case(selector, arms, signal_index, signals)
+        }
+        AstAlwaysStmt::NonBlockingAssign { output, data } => Ok(vec![RtlStmt::Assign {
             kind: RtlAssignKind::NonBlocking,
             lhs: signal_ref(output, signal_index)?,
             rhs: lower_expr(data, signal_index)?,
-        }),
+        }]),
     }
+}
+
+/// Expands `case` into a priority `if`/`else` chain. Every pattern becomes an
+/// equality test against the selector; an arm without a matching default keeps
+/// the current value, which is the Verilog case semantics.
+fn expand_case(
+    selector: &str,
+    arms: &[crate::verilog::ast::CaseArm],
+    signal_index: &HashMap<String, RtlSignalId>,
+    signals: &[RtlSignal],
+) -> eyre::Result<Vec<RtlStmt>> {
+    let selector_ref = signal_ref(selector, signal_index)?;
+    let width = signals
+        .get(selector_ref.signal.0)
+        .map(|signal| signal.width)
+        .with_context(|| format!("unknown RTL signal `{selector}`"))?;
+
+    let mut fallback = Vec::new();
+    for arm in arms.iter().rev() {
+        let body = lower_always_stmts(&arm.body, signal_index, signals)?;
+        if arm.is_default {
+            fallback = body;
+            continue;
+        }
+        let mut condition: Option<RtlExpr> = None;
+        for pattern in &arm.patterns {
+            let equals = RtlExpr::Eq(
+                Box::new(RtlExpr::Signal(selector_ref)),
+                Box::new(RtlExpr::Const {
+                    value: *pattern,
+                    width,
+                }),
+            );
+            condition = Some(match condition {
+                None => equals,
+                Some(previous) => RtlExpr::Or(Box::new(previous), Box::new(equals)),
+            });
+        }
+        let condition = condition.context("case arm has no pattern")?;
+        fallback = vec![RtlStmt::If {
+            condition,
+            then_branch: body,
+            else_branch: fallback,
+        }];
+    }
+    Ok(fallback)
 }
 
 fn lower_expr(
@@ -252,6 +323,10 @@ fn lower_expr(
 ) -> eyre::Result<RtlExpr> {
     match expr {
         AstExpr::Ident(name) => signal_expr(name, signal_index),
+        AstExpr::Slice { name, bit } => Ok(RtlExpr::Slice {
+            signal: signal_ref(name, signal_index)?,
+            bit: *bit,
+        }),
         AstExpr::Number(value) => Ok(RtlExpr::Const {
             value: *value,
             width: constant_width(*value),
@@ -265,6 +340,10 @@ fn lower_expr(
                 crate::verilog::ast::BinaryOp::And => RtlExpr::And(left, right),
                 crate::verilog::ast::BinaryOp::Xor => RtlExpr::Xor(left, right),
                 crate::verilog::ast::BinaryOp::Or => RtlExpr::Or(left, right),
+                crate::verilog::ast::BinaryOp::Eq => RtlExpr::Eq(left, right),
+                crate::verilog::ast::BinaryOp::Ne => {
+                    RtlExpr::Not(Box::new(RtlExpr::Eq(left, right)))
+                }
             })
         }
     }

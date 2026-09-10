@@ -13,7 +13,7 @@ use crate::verilog::ast::{
     PortDirection, Range, VerilogModule,
 };
 use crate::verilog::rtl::{lower_rtl_module, RtlExpr, RtlModule, RtlSignalKind, RtlSignalRef};
-use crate::verilog::synth::{synthesize_module, SynthCell};
+use crate::verilog::synth::{synthesize_module, SynthCell, SynthEdge};
 
 impl LogicalDesign {
     pub fn from_verilog_source(source: &str) -> eyre::Result<Self> {
@@ -46,6 +46,15 @@ impl LogicalDesign {
 
     pub fn lower_to_routable(&self) -> eyre::Result<RoutableDesign> {
         super::logical_lowering::lower_logical_to_routable(self)
+    }
+
+    /// Lowers with an explicit target capability set and mapping policy.
+    pub fn lower_to_routable_with_target(
+        &self,
+        target: &super::TargetSpec,
+        policy: &super::MappingPolicy,
+    ) -> eyre::Result<RoutableDesign> {
+        super::logical_lowering::lower_logical_to_routable_with_target(self, target, policy)
     }
 
     pub fn to_verilog_modules(&self) -> eyre::Result<Vec<VerilogModule>> {
@@ -369,25 +378,26 @@ impl<'a> LogicalModuleBuilder<'a> {
                 output: output_ref,
                 data,
                 clock,
+                edge,
             }
             | SynthCell::Register {
                 output: output_ref,
                 data,
                 clock,
+                edge,
             } => {
                 let output_name = self.rtl.signal_name(*output_ref)?.to_owned();
                 let width = self.rtl.signal_width(*output_ref)?;
                 let next_role = format!("{output_name}_next");
                 let data = self.emit_expr_value(data, width, &next_role)?;
+                let edge = match edge {
+                    SynthEdge::Posedge => ClockEdge::Posedge,
+                    SynthEdge::Negedge => ClockEdge::Negedge,
+                };
                 let kind = match cell {
-                    SynthCell::Dff { .. } => LogicalCellKind::Dff {
-                        edge: ClockEdge::Posedge,
-                    },
-                    SynthCell::Register { .. } => LogicalCellKind::Register {
-                        width,
-                        edge: ClockEdge::Posedge,
-                    },
-                    SynthCell::DLatch { .. } => unreachable!(),
+                    SynthCell::Dff { .. } => LogicalCellKind::Dff { edge },
+                    SynthCell::Register { .. } => LogicalCellKind::Register { width, edge },
+                    SynthCell::DLatch { .. } | SynthCell::Combinational { .. } => unreachable!(),
                 };
                 let cell_name = self.fresh_cell_name(&output_name, "state");
                 self.cells.push(LogicalCell {
@@ -397,6 +407,11 @@ impl<'a> LogicalModuleBuilder<'a> {
                     outputs: vec![output("q", output_name)],
                     origin: Some(format!("verilog.process.{index}")),
                 });
+            }
+            SynthCell::Combinational { output, data } => {
+                let output_name = self.rtl.signal_name(*output)?.to_owned();
+                let width = self.rtl.signal_width(*output)?;
+                self.emit_expr_to(data, &output_name, width, "comb")?;
             }
         }
         Ok(())
@@ -410,6 +425,10 @@ impl<'a> LogicalModuleBuilder<'a> {
     ) -> eyre::Result<LogicalValue> {
         match expr {
             RtlExpr::Signal(signal) => self.signal_value(*signal),
+            RtlExpr::Slice { signal, bit } => Ok(LogicalValue::Slice {
+                net: self.rtl.signal_name(*signal)?.to_owned(),
+                bit: *bit,
+            }),
             RtlExpr::Const { value, width } => Ok(LogicalValue::Constant {
                 value: *value as u128,
                 width: *width,
@@ -433,6 +452,16 @@ impl<'a> LogicalModuleBuilder<'a> {
             RtlExpr::Signal(signal) => (
                 LogicalCellKind::Buffer,
                 vec![input("value", self.signal_value(*signal)?)],
+            ),
+            RtlExpr::Slice { signal, bit } => (
+                LogicalCellKind::Buffer,
+                vec![input(
+                    "value",
+                    LogicalValue::Slice {
+                        net: self.rtl.signal_name(*signal)?.to_owned(),
+                        bit: *bit,
+                    },
+                )],
             ),
             RtlExpr::Const { value, width } => (
                 LogicalCellKind::Buffer,
@@ -481,6 +510,18 @@ impl<'a> LogicalModuleBuilder<'a> {
                 LogicalCellKind::Xor,
                 self.binary_inputs(left, right, expected_width, role)?,
             ),
+            RtlExpr::Eq(left, right) => {
+                let operand_width = self.expr_width(left)?;
+                (
+                    LogicalCellKind::Eq {
+                        width: operand_width,
+                    },
+                    vec![
+                        input("lhs", self.emit_expr_value(left, operand_width, role)?),
+                        input("rhs", self.emit_expr_value(right, operand_width, role)?),
+                    ],
+                )
+            }
             RtlExpr::Mux {
                 select,
                 when_true,
@@ -527,6 +568,27 @@ impl<'a> LogicalModuleBuilder<'a> {
     fn signal_value(&self, signal: RtlSignalRef) -> eyre::Result<LogicalValue> {
         Ok(LogicalValue::Net {
             net: self.rtl.signal_name(signal)?.to_owned(),
+        })
+    }
+
+    fn expr_width(&self, expr: &RtlExpr) -> eyre::Result<usize> {
+        Ok(match expr {
+            RtlExpr::Signal(signal) => self.rtl.signal_width(*signal)?,
+            RtlExpr::Slice { .. } => 1,
+            RtlExpr::Const { width, .. } => *width,
+            RtlExpr::Not(inner) => self.expr_width(inner)?,
+            RtlExpr::Eq(_, _) => 1,
+            RtlExpr::Add(left, right)
+            | RtlExpr::And(left, right)
+            | RtlExpr::Or(left, right)
+            | RtlExpr::Xor(left, right) => self.expr_width(left)?.max(self.expr_width(right)?),
+            RtlExpr::Mux {
+                when_true,
+                when_false,
+                ..
+            } => self
+                .expr_width(when_true)?
+                .max(self.expr_width(when_false)?),
         })
     }
 
@@ -581,7 +643,7 @@ fn logical_module_to_verilog(module: &LogicalModule) -> eyre::Result<VerilogModu
     for constant in module.cells.iter().flat_map(|cell| {
         cell.inputs.iter().filter_map(|input| match input.value {
             LogicalValue::Constant { value, .. } => Some(value),
-            LogicalValue::Net { .. } => None,
+            LogicalValue::Net { .. } | LogicalValue::Slice { .. } => None,
         })
     }) {
         if constant > usize::MAX as u128 {
@@ -628,7 +690,7 @@ fn logical_module_to_verilog(module: &LogicalModule) -> eyre::Result<VerilogModu
         .filter(|cell| cell.kind.is_sequential())
         .filter_map(|cell| match cell.input_value("d").ok()? {
             LogicalValue::Net { net } => Some(net.as_str()),
-            LogicalValue::Constant { .. } => None,
+            LogicalValue::Slice { .. } | LogicalValue::Constant { .. } => None,
         })
         .collect::<HashSet<_>>();
     let mut assignments = Vec::new();
@@ -695,6 +757,9 @@ fn immediate_cell_expr(cell: &LogicalCell) -> eyre::Result<Expr> {
         LogicalCellKind::Xor => binary(BinaryOp::Xor, value("lhs")?, value("rhs")?),
         LogicalCellKind::Add => binary(BinaryOp::Add, value("lhs")?, value("rhs")?),
         LogicalCellKind::Inc => binary(BinaryOp::Add, value("value")?, Expr::Number(1)),
+        LogicalCellKind::Eq { .. } => {
+            eyre::bail!("eq is not an immediate Verilog expression")
+        }
         LogicalCellKind::Mux => eyre::bail!("mux is not an immediate Verilog expression"),
         LogicalCellKind::DLatch { .. }
         | LogicalCellKind::Dff { .. }
@@ -715,11 +780,12 @@ fn sequential_cell_to_always(
             Ok(AlwaysBlock {
                 sensitivity: AlwaysSensitivity::Any,
                 body: AlwaysStmt::If {
-                    condition: enable.to_owned(),
+                    condition: Expr::Ident(enable.to_owned()),
                     then_branch: Box::new(AlwaysStmt::NonBlockingAssign {
                         output,
                         data: expand_value(cell.input_value("d")?, drivers, &mut Vec::new())?,
                     }),
+                    else_branch: None,
                 },
             })
         }
@@ -752,7 +818,7 @@ fn enabled_assignment(
                 let select =
                     net_value_name(mux.input_value("select")?, "clocked enable")?.to_owned();
                 return Ok(AlwaysStmt::If {
-                    condition: select,
+                    condition: Expr::Ident(select),
                     then_branch: Box::new(AlwaysStmt::NonBlockingAssign {
                         output: output.to_owned(),
                         data: expand_value(
@@ -761,6 +827,7 @@ fn enabled_assignment(
                             &mut Vec::new(),
                         )?,
                     }),
+                    else_branch: None,
                 });
             }
         }
@@ -808,6 +875,9 @@ fn expand_value(
             expand("rhs", active)?,
         ),
         LogicalCellKind::Inc => binary(BinaryOp::Add, expand("value", active)?, Expr::Number(1)),
+        LogicalCellKind::Eq { .. } => {
+            eyre::bail!("eq cannot be represented by the current Verilog AST")
+        }
         LogicalCellKind::Mux => {
             eyre::bail!("generic mux expression cannot be represented by the current Verilog AST")
         }
@@ -820,6 +890,10 @@ fn expand_value(
 fn value_expr(value: &LogicalValue) -> Expr {
     match value {
         LogicalValue::Net { net } => Expr::Ident(net.clone()),
+        LogicalValue::Slice { net, bit } => Expr::Slice {
+            name: net.clone(),
+            bit: *bit,
+        },
         LogicalValue::Constant { value, .. } => Expr::Number(*value as usize),
     }
 }
@@ -827,6 +901,7 @@ fn value_expr(value: &LogicalValue) -> Expr {
 fn net_value_name<'a>(value: &'a LogicalValue, role: &str) -> eyre::Result<&'a str> {
     match value {
         LogicalValue::Net { net } => Ok(net),
+        LogicalValue::Slice { .. } => eyre::bail!("{role} must be a plain net"),
         LogicalValue::Constant { .. } => eyre::bail!("{role} must be a net"),
     }
 }

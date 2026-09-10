@@ -24,6 +24,57 @@ pub(super) fn not_node_kind() -> Vec<BlockKind> {
     vec![BlockKind::Torch { is_on: false }]
 }
 
+/// Physical source of a logical constant. Lowering expands `false` into
+/// `not(constant true)`, so the placer only ever materializes powered sources.
+pub(super) fn constant_node_kind() -> Vec<BlockKind> {
+    vec![BlockKind::RedstoneBlock]
+}
+
+/// Places a constant source. Constants have no orientation and no external
+/// driver, so they reuse the input placement domain but with one block kind.
+pub(super) fn generate_constant_placements(
+    config: &LocalPlacerConfig,
+    world: &World3D,
+    kind: BlockKind,
+) -> Vec<(World3D, Position)> {
+    let positions = match config.input_placement_strategy {
+        InputPlacementStrategy::Boundary => iproduct!(0..1, 0..world.size.1, 0..world.size.2)
+            .chain(iproduct!(0..world.size.0, 0..1, 0..world.size.2))
+            .map(|(x, y, z)| Position(x, y, z))
+            .unique()
+            .collect_vec(),
+        InputPlacementStrategy::Anywhere => {
+            iproduct!(0..world.size.0, 0..world.size.1, 0..world.size.2)
+                .map(|(x, y, z)| Position(x, y, z))
+                .collect_vec()
+        }
+    };
+
+    let mut generated = positions
+        .into_iter()
+        .filter_map(|position| {
+            let placed_node = PlacedNode {
+                position,
+                block: Block {
+                    kind,
+                    direction: Direction::None,
+                },
+            };
+            if placed_node.has_conflict(world, &Default::default()) {
+                return None;
+            }
+            let mut new_world = world.clone();
+            place_node(&mut new_world, placed_node);
+            Some((new_world, position))
+        })
+        .collect_vec();
+
+    if let Some(limit) = config.input_candidate_limit {
+        generated.truncate(limit);
+    }
+    generated
+}
+
 pub(super) use detailed_router::place_node;
 
 pub(super) fn generate_inputs(

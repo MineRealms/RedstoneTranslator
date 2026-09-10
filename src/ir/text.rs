@@ -696,6 +696,9 @@ fn write_leaf(
         write!(output, "  node {} ", node.id)?;
         match &node.kind {
             RoutableNodeKind::Input { name } => write!(output, "input {}", quoted(name))?,
+            RoutableNodeKind::Constant { value } => {
+                write!(output, "constant {}", usize::from(*value))?
+            }
             RoutableNodeKind::Output { name } => write!(output, "output {}", quoted(name))?,
             RoutableNodeKind::Not => write!(output, "logic not")?,
             RoutableNodeKind::And => write!(output, "logic and")?,
@@ -1547,6 +1550,12 @@ impl Parser {
             RoutableNodeKind::Output {
                 name: self.expect_string()?,
             }
+        } else if self.consume_keyword("constant") {
+            let value = self.expect_number()?;
+            if value > 1 {
+                eyre::bail!("routable constant node must be 0 or 1, found {value}");
+            }
+            RoutableNodeKind::Constant { value: value == 1 }
         } else if self.consume_keyword("logic") {
             match self.expect_word()?.as_str() {
                 "not" => RoutableNodeKind::Not,

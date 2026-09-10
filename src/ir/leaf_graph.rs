@@ -34,6 +34,7 @@ pub(crate) fn graph_from_routable_leaf(module: &RoutableModule) -> eyre::Result<
 fn graph_node_kind(kind: &RoutableNodeKind) -> GraphNodeKind {
     match kind {
         RoutableNodeKind::Input { name } => GraphNodeKind::Input(name.clone()),
+        RoutableNodeKind::Constant { value } => GraphNodeKind::Constant(*value),
         RoutableNodeKind::Output { name } => GraphNodeKind::Output(name.clone()),
         RoutableNodeKind::Not => GraphNodeKind::Logic(Logic {
             logic_type: LogicType::Not,
