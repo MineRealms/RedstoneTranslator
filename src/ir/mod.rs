@@ -1,4 +1,5 @@
 pub mod debug;
+mod flatten;
 mod leaf_graph;
 pub(crate) use leaf_graph::graph_from_routable_leaf;
 pub mod logical;

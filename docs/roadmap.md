@@ -106,8 +106,9 @@ Goal: represent what real designs need before the physical flow.
 
 - [ ] `reset` (sync/async) and `enable` on state cells in Logical IR.
 - [ ] Carry reset/enable through Logical-to-Routable decomposition.
-- [ ] Shallow hierarchy flattening beyond the current one-level leaf
-      children, or explicitly support composite children in global PnR.
+- [x] Hierarchy: deterministic flattening for nested hierarchy, mixed
+      cells/instances, and vector-port children; the legacy one-level scalar
+      structural path is preserved for compatibility.
 - [ ] Embed `MappingPolicy` in RCIR/snapshots for reproducible lowering.
 - [ ] Optional: `LoweringMap` provenance object (many-to-many mapping).
 
@@ -145,6 +146,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | Step 2b | Cell library model, physical contract, JSON round-trip, policy resolution | 298 non-heavy tests |
 | Step 2c | Contract consumption: isolation, halo placement, fingerprints | 301 non-heavy tests |
 | Step 2d | Library CLI, snapshot embedding, replay restore, halo in parity hash | 302 non-heavy tests |
+| Step 3a | Deterministic hierarchy flattening (nested, mixed, vector ports) | 306 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

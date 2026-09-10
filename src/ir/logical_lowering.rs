@@ -329,11 +329,21 @@ fn lower_logical_design(
         };
     }
 
-    if !top.cells.is_empty() {
-        eyre::bail!(
-            "mixed logical cells and instances are not supported in module `{}` yet",
-            top.name
-        );
+    // The legacy hierarchy path handles one level of instance-free scalar
+    // children and no local cells. Nested hierarchy, mixed cells, or vector
+    // ports are flattened into a single instance-free module first.
+    let legacy_hierarchy = top.cells.is_empty()
+        && top.instances.iter().all(|instance| {
+            definitions
+                .get(instance.module.as_str())
+                .is_some_and(|definition| {
+                    definition.instances.is_empty()
+                        && definition.nets.iter().all(|net| net.width == 1)
+                })
+        });
+    if !legacy_hierarchy {
+        let flattened = design.flatten_hierarchy()?;
+        return lower_logical_design(&flattened, target, policy);
     }
 
     let mut modules = Vec::new();

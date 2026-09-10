@@ -108,6 +108,12 @@ Frontend details:
 - `always @(posedge clk)` and `always @(negedge clk)` are supported; the
   mapper places master/slave latches with swapped enables for negative edges.
 - Bare `reg` declarations declare internal signals.
+- Hierarchy: a single level of instance-free scalar children keeps its
+  structural Routable modules. Nested hierarchy, modules that mix cells and
+  instances, and children with vector ports are flattened deterministically
+  (`LogicalDesign::flatten_hierarchy`) before lowering; child cells and nets
+  receive an `{instance_path}__{name}` prefix and child ports bind to the
+  parent nets.
 - A clocked process may assign several signals; each becomes its own DFF or
   register with a per-signal next-value expression. Later assignments take
   priority and unassigned paths hold the previous value.

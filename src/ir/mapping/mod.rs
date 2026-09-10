@@ -1006,6 +1006,70 @@ module m {
     }
 
     #[test]
+    fn nested_hierarchy_flattens_and_lowers() {
+        let design = lower(
+            r#"
+            module inv(a, y);
+              input a;
+              output y;
+              assign y = ~a;
+            endmodule
+
+            module pair(a, y);
+              input a;
+              output y;
+              wire mid;
+              inv u0(.a(a), .y(mid));
+              inv u1(.a(mid), .y(y));
+            endmodule
+
+            module top(a, y);
+              input a;
+              output y;
+              pair p(.a(a), .y(y));
+            endmodule
+            "#,
+        );
+
+        let table = leaf_truth_table(&design, "top");
+        assert_eq!(table.input_names, ["a"]);
+        assert_eq!(table.output_tables["y"], vec![false, true]);
+    }
+
+    #[test]
+    fn hierarchy_with_vector_ports_flattens_and_lowers() {
+        let design = lower(
+            r#"
+            module xor2(a, b, y);
+              input [1:0] a, b;
+              output [1:0] y;
+              assign y = a ^ b;
+            endmodule
+
+            module top(a, b, y);
+              input [1:0] a, b;
+              output [1:0] y;
+              xor2 u(.a(a), .b(b), .y(y));
+            endmodule
+            "#,
+        );
+
+        let table = leaf_truth_table(&design, "top");
+        assert_eq!(table.input_names, ["a_0", "a_1", "b_0", "b_1"]);
+        for mask in 0..16 {
+            for bit in 0..2 {
+                let a = (mask >> bit) & 1 == 1;
+                let b = (mask >> (2 + bit)) & 1 == 1;
+                assert_eq!(
+                    table.output_tables[&format!("y_{bit}")][mask],
+                    a ^ b,
+                    "mask {mask} bit {bit}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn fsm_with_case_and_combinational_output_lowers_to_a_pnr_topology() {
         let design = lower(
             r#"
