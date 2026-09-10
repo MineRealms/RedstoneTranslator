@@ -51,6 +51,19 @@ frontend. Extend around that core; do not replace it.
 Route C from the Phase 0 analysis: strengthen the mapping core first, then
 extend the frontend, then build the demos.
 
+### CAD refactor track (branch `cad-refactor`)
+
+The beam-search local placer is the blocking bottleneck (see
+`docs/project_status.md`). A CAD-style replacement is designed in
+`docs/architecture.md`: force-directed initial placement + simulated
+annealing, verified macro library (primitive and logic macros), unified 3D A*
+router with pin escape, coarse global routing, PathFinder negotiated
+congestion, conflict learning, redstone validation, and a compression ladder.
+Milestones are M0 benchmarks, M1 placement IR + macros, M2 router, M3
+placement, M4 repair, M5 compression. The IR/mapping/frontend work below is
+preserved; the CAD track replaces only the physical search engine behind the
+`LayoutCandidate` boundary.
+
 ### Step 1 - General mapper + target capabilities + mapping policy (DONE)
 
 - [x] `src/ir/target.rs`: `TargetSpec`/`TargetOp`/`MappingPolicy`

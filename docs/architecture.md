@@ -1,7 +1,9 @@
 # CAD-Style Place-and-Route Architecture (Migration Design)
 
 > Status: **design proposal only — no source changes until approved.**
-> Branch: `cad-refactor`. Base: `15294b3`.
+> Branch: `cad-refactor`. Base: `15294b3`. Revision: v2 (review feedback merged:
+> force-directed initial placement, logic macros, pin escape routing,
+> Minecraft-specific congestion, M0-M5 ordering).
 >
 > Companion document: `docs/project_status.md` (what is done, what is missing,
 > and the precise failure of the current beam-search placer).
@@ -9,16 +11,19 @@
 ## 1. Goal
 
 Replace the local beam-search placer/router as the primary physical engine with
-a small, real CAD flow specialized for Minecraft redstone:
+a small, real CAD flow specialized for Minecraft redstone. The root cause of
+the current failures is not search depth; it is the paradigm: incremental
+greedy construction must become **global optimization plus repair**.
 
 ```text
 Routable leaf netlist
   -> logic preprocessing (existing)
-  -> macro library expansion (new)
-  -> 3D placement (new: simulated annealing)
-  -> coarse global routing (new)
-  -> detailed 3D routing (new: A* with state)
-  -> negotiated congestion + rip-up/reroute (new: PathFinder-style)
+  -> macro clustering / library expansion (new)
+  -> force-directed initial placement (new)
+  -> simulated annealing refinement (new)
+  -> global congestion estimate + coarse global routing (new)
+  -> A* detailed routing with pin escape (new)
+  -> PathFinder negotiated congestion + rip-up/reroute (new)
   -> conflict feedback into placement (new)
   -> redstone validation (existing simulator + new checks)
   -> compression loop (new)
@@ -27,7 +32,8 @@ Routable leaf netlist
 
 Priorities, in order: **routing success rate**, deterministic valid circuits,
 reasonable compactness, maintainable architecture. Density is explicitly not
-the objective; Minecraft space is cheap.
+the objective; Minecraft space is cheap. The design must also use the third
+dimension actively instead of packing into a thin slab.
 
 ## 2. Existing architecture (inventory)
 
@@ -83,6 +89,9 @@ pipeline) happens at the end.
 ## 4. Phase 2 — Macro library
 
 Today a leaf is placed gate by gate. The new flow places **verified macros**.
+This is the single most important deliverable: in ASIC terms a cell plus free
+routing; in Minecraft the cell *is* the building, so a verified macro is worth
+far more than a smarter search over raw blocks.
 
 Extend the existing cell library instead of adding a parallel one:
 
@@ -90,11 +99,19 @@ Extend the existing cell library instead of adding a parallel one:
 - `MacroTemplate`:
   - `size`, `occupied_blocks`, `forbidden_routing_cells`
   - `pins: Vec<MacroPin>` (relative position, direction, signal kind)
+  - `routing_halo` (cells that must stay free around the macro)
+  - `pin_escape`: precomputed escape directions/cells per pin
   - `allowed_rotations` (conservative: none or yaw)
   - `variant_name` (e.g. `not.compact`, `or.merge`, `xor.nor_network`)
   - `verified_by: SimulatorFingerprint`
-- First macro set: NOT, OR merge, AND (decomposed), XOR, MUX, DFF master/slave
-  pair, RS latch (already exists as `SequentialMacro`), full adder.
+- Library tiers:
+  1. **Primitive macros**: NOT, OR merge, AND (decomposed), XOR, MUX,
+     DFF master/slave pair, RS latch (already exists as `SequentialMacro`).
+  2. **Logic macros**: half adder, full adder, mux2, small decoder, register
+     bit, counter bit. These are common in hand-built redstone and should be
+     verified once and composed everywhere.
+- File format: a versioned `redstone.lib` document (JSON DTO first, mirroring
+  `CellLibrary`) that carries macros, contracts, and recipes.
 - Recipes (port faces, corridors, objectives) come from
   `docs/physical_design_intent.md`; start with exact verified templates and
   add partial-relation recipes later.
@@ -102,9 +119,26 @@ Extend the existing cell library instead of adding a parallel one:
 The existing hardcoded RS-latch macro and the `LayoutCandidate` generator
 become macro producers rather than special cases.
 
-## 5. Phase 3 — Simulated annealing placement
+## 5. Phase 3 — Placement: force-directed initial + simulated annealing
 
 Proposed module: `src/transform/place_and_route/sa_placer.rs`
+
+Do **not** start annealing from random positions. The netlists are small and
+their topology matters; a random start wastes thousands of iterations.
+
+### 5.1 Initial placement (deterministic)
+
+1. **Topological seed**: place macros in topological order along a space-filling
+   curve, respecting macro sizes (this is today's beam search without routing).
+2. **Barycenter pass**: repeatedly move each macro toward the average position
+   of its connected pins until the movement falls below a threshold.
+3. **Force-directed relaxation**: spring attraction along nets, AABB repulsion
+   for overlap, optional z-axis bias to spread into the third dimension.
+   This naturally pulls `A, B, OR` together before any random search.
+
+The result is the SA starting point.
+
+### 5.2 Simulated annealing refinement
 
 - State: `Map<MacroInstanceId, (Position, Rotation)>` in a bounded box.
 - Moves: translate, swap two macros, rotate, spread a congested cluster.
@@ -115,6 +149,7 @@ cost = 1.0  * estimated_wire_length        (HPWL over nets)
      + 0.1  * bounding_box_volume
      + 20.0 * routing_congestion_estimate   (per-region demand/capacity)
      + 50.0 * blocked_pin_penalty           (pins with no escape cell)
+     + 30.0 * pin_access_penalty            (see escape routing, §6.1)
      + 10.0 * region_pressure               (conflict-learning feedback)
 ```
 
@@ -144,6 +179,25 @@ Proposed module: `src/transform/place_and_route/route_engine.rs`
 
 The engine must be pure over `World3D` so it can be unit-tested with the
 existing simulator fixtures.
+
+### 6.1 Pin escape routing
+
+A* can find a theoretical path while the pin is physically boxed in by
+neighbouring macros. Placement must therefore score pin accessibility, not just
+pin existence.
+
+- After placement, build a per-pin **escape map**: flood-fill the free cells
+  adjacent to the pin (treating other macros as obstacles) and record
+  - the number of distinct escape directions,
+  - the distance to the nearest free routing channel,
+  - whether the pin is reachable from the other endpoints of its net.
+- Pin score: `0 = dead end`, `1 = risky`, `2 = normal`, `3+ = excellent`.
+- `blocked_pin_penalty` and `pin_access_penalty` in the placement cost consume
+  this score; a macro with any pin score 0 is rejected outright.
+- The detailed router starts from the pin's escape cells rather than from the
+  pin block itself, mirroring PCB escape routing.
+- Macros publish precomputed escape directions per pin (`pin_escape`) so the
+  map is cheap to build.
 
 ## 7. Phase 5 — Coarse global routing
 
@@ -175,6 +229,26 @@ for iteration in 0..max_iterations:
 - This is the standard answer to "greedy routing boxes itself in": it repairs
   instead of committing.
 
+### 8.1 Minecraft-specific congestion
+
+FPGA congestion counts wire resources; Minecraft congestion must model voxels
+and block behavior. The cost of a cell is a weighted sum:
+
+```text
+congestion(cell) = w1 * block_occupancy
+                 + w2 * signal_corridor_pressure
+                 + w3 * direction_conflict
+                 + w4 * future_escape_cost
+```
+
+- `signal_corridor_pressure`: how many nets want to cross this cell's region.
+- `direction_conflict`: opposing torch/repeater directions sharing a corridor.
+- `future_escape_cost`: a free cell that is the *only* escape for a macro pin
+  has high congestion even though it is empty. This is what prevents the
+  placer from sealing a pin with a later macro.
+- Weights are preset per flow stage: placement uses a coarse estimate, global
+  routing a region-level one, detailed routing the exact one.
+
 ## 9. Phase 7 — Conflict learning (placement feedback)
 
 Lightweight because circuits are small:
@@ -203,18 +277,21 @@ are never cached or emitted.
 
 ## 11. Phase 9 — Compression
 
-Generate a valid circuit first, then shrink:
+Generate a valid circuit first, then shrink. Minecraft makes this cheap: start
+with abundant space and let the compressor find the smallest valid box.
 
 ```text
-for box in candidate_boxes_sorted_descending:
+box ladder: 64x64x16 -> 56x56x14 -> 48x48x12 -> 40x40x10 -> 32x32x8 -> 24x24x6
+for box in ladder (descending):
     re-run placement/routing inside box
-    validate
+    validate (redstone checks + simulator)
     keep the first (smallest) valid result
 ```
 
 Compression is a loop around the flow, not a property of the placer. The
 existing `LayoutCandidateCost` metrics (volume, footprint, height, access
-points) are the acceptance metrics.
+points) are the acceptance metrics. The ladder, not a single hard box, is the
+search domain.
 
 ## 12. Compatibility and migration strategy
 
@@ -238,23 +315,29 @@ points) are the acceptance metrics.
 
 ## 13. Milestones and acceptance criteria
 
+The ordering below is deliberate: benchmarks first, then the router, then
+placement, then repair, then compression. Each milestone is a separate commit
+with its acceptance evidence.
+
 | Milestone | Scope | Acceptance |
 | --- | --- | --- |
-| M1 | Placement IR + macro model; old engine unchanged | New IR unit tests; 311 tests green; one macro (NOT) round-trips through the IR |
-| M2 | 3D A* route engine extracted; old router delegates | Route engine unit tests vs simulator fixtures; old behavior unchanged |
-| M3 | Simulated annealing placer for leaf candidates behind a flag | One-bit FSM leaf places; XOR/full-adder benchmarks place; old engine still default |
-| M4 | Global routing + PathFinder + conflict feedback | 26-node dense OR cone and two-bit FSM place; deterministic output; snapshot replay stable |
-| M5 | Compression loop + new engine default | Compression improves volume on benchmarks; old engine deprecated |
+| M0 | Benchmark set + baseline metrics harness | `not_chain`, `full_adder`, `dense_or_cone`, `fsm_1bit`, `fsm_2bit`, `random_10`, `random_40` all lower to a valid topology; baseline metrics recorded (leaves, prepared sizes, P&R success/time) |
+| M1 | Placement IR + macro model; old engine unchanged | New IR unit tests; all existing tests green; one primitive macro and one logic macro (full adder) round-trip through the IR |
+| M2 | Unified 3D A* route engine with redstone rules | Route engine unit tests vs simulator fixtures; old router delegates and keeps identical results |
+| M3 | Macro placement: topological seed + force-directed + SA refinement, behind a flag | One-bit FSM leaf places; full adder and dense OR cone place; old engine still default |
+| M4 | Coarse global routing + PathFinder negotiated congestion + conflict feedback | Two-bit FSM and dense OR cone place deterministically; snapshot replay stable |
+| M5 | Compression ladder + new engine default | Compression reduces volume on benchmarks; old beam-search engine deprecated |
 
 ## 14. Benchmarks and metrics
 
-Benchmark set (checked into `test/` as Verilog or RCIR):
+Benchmark set (checked into `test/benchmarks/` as Verilog):
 
-1. `not_chain`: NOT -> NOT -> output.
-2. `full_adder`: XOR/AND/OR cone.
-3. `dense_or_cone`: 26 nodes, multiple fan-in (the current failure case).
-4. `fsm_1bit`, `fsm_2bit`: case-based state machines.
-5. Random 10-40 gate combinational netlists with a fixed seed.
+1. `not_chain.v`: NOT -> NOT -> output.
+2. `full_adder.v`: XOR/AND/OR cone.
+3. `dense_or_cone.v`: 26+ OR nodes with multiple fan-in (the current failure
+   case).
+4. `fsm_1bit.v`, `fsm_2bit.v`: case-based state machines.
+5. `random_10.v`, `random_40.v`: deterministic mixed-gate netlists.
 
 Metrics recorded per run: routing success rate, generated volume/footprint,
 wire length, repeater count, iterations, wall-clock time, and determinism
