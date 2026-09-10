@@ -1,10 +1,9 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use eyre::ContextCompat;
 
 use crate::output::OutputEndpoint;
 use crate::transform::place_and_route::detailed_router;
-use crate::transform::place_and_route::global_pnr::assembly::reset_dynamic_power_states;
 use crate::transform::place_and_route::global_pnr::heuristics::GlobalHeuristicHooks;
 use crate::transform::place_and_route::global_pnr::ir::{
     LayoutCandidate, PhysicalPort, PhysicalPortDirection,
@@ -12,27 +11,28 @@ use crate::transform::place_and_route::global_pnr::ir::{
 use crate::transform::place_and_route::global_pnr::physical_intent::ResolvedPhysicalIntent;
 use crate::transform::place_and_route::global_pnr::placer::PlacedModule;
 use crate::transform::place_and_route::global_pnr::progress::GlobalPnrProgress;
+pub(crate) use crate::transform::place_and_route::global_pnr::route_engine::first_invalid_active_route;
+use crate::transform::place_and_route::global_pnr::route_engine::{
+    adapter_allowed_contacts, adapter_touches_forbidden_existing_signal, added_route_blocks,
+    eager_route_failure_reason, initial_signal_strength, is_route_terminal,
+    isolated_output_repeater_initial_states, place_support_cobble_if_needed, powered_route_source,
+    redstone_network_positions, route_candidate_powers_sink,
+    route_point_to_point_from_initial_state,
+    route_point_to_point_with_strategy_and_allowed_contacts,
+    route_point_to_point_with_strategy_and_allowed_contacts_and_initial_strength,
+    routeable_output_taps, sorted_route_bounds, PoweredRouteSource, RouteSearchState,
+    MAX_REDSTONE_STRENGTH,
+};
+pub use crate::transform::place_and_route::global_pnr::route_engine::{
+    route_point_to_point, route_point_to_point_with_strategy,
+};
 use crate::transform::place_and_route::global_pnr::topology::{
     NetId, ResolvedEndpoint, ResolvedPnrTopology,
 };
 use crate::transform::place_and_route::placed_node::PlacedNode;
 use crate::world::block::{Block, BlockKind, Direction};
 use crate::world::position::{DimSize, Position};
-use crate::world::simulator::Simulator;
-use crate::world::{World, World3D};
-pub use crate::transform::place_and_route::global_pnr::route_engine::{
-    route_point_to_point, route_point_to_point_with_strategy,
-};
-use crate::transform::place_and_route::global_pnr::route_engine::{
-    adapter_allowed_contacts, adapter_touches_forbidden_existing_signal, added_route_blocks,
-    initial_signal_strength, is_route_terminal, is_signal_terminal_block,
-    isolated_output_repeater_initial_states, place_support_cobble_if_needed,
-    powered_route_source, redstone_network_positions, route_point_to_point_from_initial_state,
-    route_point_to_point_with_strategy_and_allowed_contacts,
-    route_point_to_point_with_strategy_and_allowed_contacts_and_initial_strength,
-    routeable_output_taps, sorted_route_bounds, PoweredRouteSource, RouteSearchState,
-    MAX_REDSTONE_STRENGTH,
-};
+use crate::world::World3D;
 
 const GLOBAL_ROUTE_PADDING: usize = 8;
 const FANOUT_ROUTE_SOURCE_LIMIT: usize = 8;
@@ -109,7 +109,6 @@ fn resolved_instance_port_pair(
     ))
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GlobalRoutingStrategy {
     BreadthFirst,
@@ -182,7 +181,6 @@ struct ExternalInputSource {
     route_source: Position,
     blocks: Vec<(Position, Block)>,
 }
-
 
 #[derive(Clone, Debug)]
 pub struct RoutedNet {
@@ -1043,177 +1041,6 @@ fn route_top_input_to_target_from_network(
         source: logical_source,
         sink: sink.position,
     })
-}
-
-fn active_route_powers_sink(before: &World3D, after: &World3D, route: &RoutedNet) -> bool {
-    if !can_validate_active_route_source(before, route.source)
-        && !can_validate_active_route_source(after, route.source)
-    {
-        return true;
-    }
-
-    let Some(before_source_active) = route_source_power_after_settle(before, route.source, false)
-    else {
-        return false;
-    };
-    let Some((after_source_active, required_positions_powered)) =
-        active_route_power_after_settle(after, route)
-    else {
-        return false;
-    };
-
-    if before_source_active && !after_source_active {
-        return false;
-    }
-    if !after_source_active {
-        return true;
-    }
-
-    required_positions_powered
-}
-
-fn route_candidate_powers_sink(
-    before: &World3D,
-    after: &World3D,
-    route: &RoutedNet,
-    strategy: GlobalRoutingStrategy,
-) -> bool {
-    // DirectGreedy is the cheap global probe. Its complete routed world is
-    // dynamically validated by global PnR, so simulating every tentative tap,
-    // adapter, and source alternative here only multiplies rejection cost.
-    matches!(
-        strategy,
-        GlobalRoutingStrategy::DirectGreedy { .. } | GlobalRoutingStrategy::GreedyBeam { .. }
-    ) || active_route_powers_sink(before, after, route)
-}
-
-fn active_route_power_after_settle(world: &World3D, route: &RoutedNet) -> Option<(bool, bool)> {
-    let mut world = world.clone();
-    reset_dynamic_power_states(&mut world);
-    world.initialize_redstone_states();
-    if matches!(world[route.source].kind, BlockKind::Switch { .. }) {
-        world[route.source].kind = BlockKind::Switch { is_on: true };
-    }
-
-    let world = World::from(&world);
-    let sim = Simulator::from_preserving_torch_states_with_limits_and_trace(&world, 256, 50_000, 0)
-        .ok()?;
-    Some((
-        block_is_powered(sim.world(), route.source),
-        route
-            .required_powered_positions
-            .iter()
-            .all(|position| block_is_powered(sim.world(), *position)),
-    ))
-}
-
-fn route_source_power_after_settle(
-    world: &World3D,
-    source: Position,
-    force_switch_on: bool,
-) -> Option<bool> {
-    let mut world = world.clone();
-    reset_dynamic_power_states(&mut world);
-    world.initialize_redstone_states();
-    if force_switch_on && matches!(world[source].kind, BlockKind::Switch { .. }) {
-        world[source].kind = BlockKind::Switch { is_on: true };
-    }
-
-    let world = World::from(&world);
-    let sim = Simulator::from_preserving_torch_states_with_limits_and_trace(&world, 256, 50_000, 0)
-        .ok()?;
-    Some(block_is_powered(sim.world(), source))
-}
-
-fn route_power_contract_holds(before: &World3D, after: &World3D, route: &RoutedNet) -> bool {
-    route_power_contract_failure_reason(before, after, route).is_none()
-}
-
-fn eager_route_failure_reason(
-    validation: RouteValidationMode,
-    before: &World3D,
-    after: &World3D,
-    route: &RoutedNet,
-) -> Option<&'static str> {
-    if route_has_signal_feedback_cycle(after, route) {
-        return Some("route contains a self-sustaining signal feedback cycle");
-    }
-    if validation == RouteValidationMode::Deferred {
-        return None;
-    }
-    route_power_contract_failure_reason_without_cycle(before, after, route)
-}
-
-fn route_power_contract_failure_reason(
-    before: &World3D,
-    after: &World3D,
-    route: &RoutedNet,
-) -> Option<&'static str> {
-    if route_has_signal_feedback_cycle(after, route) {
-        return Some("route contains a self-sustaining signal feedback cycle");
-    }
-    route_power_contract_failure_reason_without_cycle(before, after, route)
-}
-
-fn route_power_contract_failure_reason_without_cycle(
-    before: &World3D,
-    after: &World3D,
-    route: &RoutedNet,
-) -> Option<&'static str> {
-    if !active_route_powers_sink(before, after, route) {
-        return Some("active source does not power all required route positions");
-    }
-    if !switch_route_releases_required_positions_when_off(after, route) {
-        return Some("switch-off source still powers at least one required route position");
-    }
-
-    None
-}
-
-fn switch_route_releases_required_positions_when_off(world: &World3D, route: &RoutedNet) -> bool {
-    if !matches!(world[route.source].kind, BlockKind::Switch { .. }) {
-        return true;
-    }
-
-    let mut inactive_world = world.clone();
-    reset_dynamic_power_states(&mut inactive_world);
-    inactive_world[route.source].kind = BlockKind::Switch { is_on: false };
-    inactive_world.initialize_redstone_states();
-
-    let world = World::from(&inactive_world);
-    let Ok(sim) =
-        Simulator::from_preserving_torch_states_with_limits_and_trace(&world, 256, 50_000, 0)
-    else {
-        return false;
-    };
-
-    !route
-        .required_released_positions
-        .iter()
-        .any(|position| block_is_powered(sim.world(), *position))
-}
-
-pub(crate) fn first_invalid_active_route<'a>(
-    world: &World3D,
-    routes: &'a [RoutedNet],
-) -> Option<&'a RoutedNet> {
-    routes
-        .iter()
-        .find(|route| !route_power_contract_holds(world, world, route))
-}
-
-fn can_validate_active_route_source(world: &World3D, position: Position) -> bool {
-    matches!(
-        world[position].kind,
-        BlockKind::Redstone { .. }
-            | BlockKind::Torch { .. }
-            | BlockKind::Repeater { .. }
-            | BlockKind::Switch { .. }
-    )
-}
-
-fn block_is_powered(world: &World3D, position: Position) -> bool {
-    world[position].kind.is_powered()
 }
 
 fn route_variable_priority(
@@ -2215,43 +2042,6 @@ fn resolve_port_targets(
     }]
 }
 
-fn route_has_signal_feedback_cycle(world: &World3D, route: &RoutedNet) -> bool {
-    let signal_positions = route
-        .path
-        .iter()
-        .copied()
-        .chain(route.blocks.iter().map(|(position, _)| *position))
-        .filter(|position| {
-            world.size.bound_on(*position) && is_signal_terminal_block(world[*position])
-        })
-        .collect::<HashSet<_>>();
-
-    for start in signal_positions
-        .iter()
-        .copied()
-        .filter(|position| matches!(world[*position].kind, BlockKind::Repeater { .. }))
-    {
-        let mut visited = HashSet::from([start]);
-        let mut frontier = VecDeque::from([start]);
-        while let Some(source) = frontier.pop_front() {
-            for target in signal_positions.iter().copied() {
-                if target == source
-                    || !detailed_router::target_powers_position(world, source, target)
-                {
-                    continue;
-                }
-                if target == start {
-                    return true;
-                }
-                if visited.insert(target) {
-                    frontier.push_back(target);
-                }
-            }
-        }
-    }
-    false
-}
-
 fn resolve_observable_port_position(
     candidates: &[LayoutCandidate],
     placed_modules: &[PlacedModule],
@@ -2392,7 +2182,6 @@ fn translate_candidate_position(
     )
 }
 
-
 fn route_isolated_output_to_point(
     world: &World3D,
     logical_source: Position,
@@ -2438,14 +2227,18 @@ mod tests {
     use crate::transform::place_and_route::global_pnr::ir::{
         LayoutCandidate, PhysicalPort, PhysicalPortDirection, PortConnection,
     };
-    use crate::transform::place_and_route::place_bound::{PlaceBound, PropagateType};
     use crate::transform::place_and_route::global_pnr::placer::{
         place_candidates_on_shelves, GlobalPlacementConfig, PlacedModule,
+    };
+    use crate::transform::place_and_route::global_pnr::route_engine::validation::{
+        active_route_powers_sink, can_validate_active_route_source, route_power_contract_holds,
+        switch_route_releases_required_positions_when_off,
     };
     use crate::transform::place_and_route::global_pnr::topology::{
         DefinitionId, DefinitionKey, InstanceId, InstanceKey, NetKey, PortId, ResolvedDefinition,
         ResolvedInstance, ResolvedNet, ResolvedPort,
     };
+    use crate::transform::place_and_route::place_bound::{PlaceBound, PropagateType};
     use crate::world::block::{BlockKind, Direction, RedstoneState};
     use crate::world::simulator::Simulator;
     use crate::world::World;

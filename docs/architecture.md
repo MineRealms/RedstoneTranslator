@@ -256,19 +256,30 @@ until M4.
 
 - **Level 1 (per expansion)**: cheap rules only — strength decay, direction,
   occupancy, forbidden contacts, short-circuit checks.
-- **Level 2 (complete candidate only)**: run the existing simulator
-  (`active_route_power_after_settle` /
-  `Simulator::from_preserving_torch_states_with_limits_and_trace`) and accept
-  or reject the finished path.
+- **Level 2 (complete candidate only)**: `route_engine::validation` settles the
+  routed world with the existing simulator
+  (`Simulator::from_preserving_torch_states_with_limits_and_trace`) and checks
+  the power contract: required positions powered while the source is active,
+  released when a switch source is off, and no self-sustaining feedback cycle.
 
 Simulating every A* node would explode, so simulate-based penalties feed back
 into routing only in M4 (PathFinder).
 
 ```rust
-pub trait RouteValidator {
-    fn validate(&self, route: &RoutePath) -> ValidationResult;
+pub(crate) trait RouteValidator {
+    fn validate(
+        &self,
+        before: &World3D,
+        after: &World3D,
+        route: &RoutedNet,
+    ) -> RouteValidationResult;
 }
 ```
+
+`SimulatorRouteValidator` is the only implementation today.
+`route_candidate_powers_sink` delegates to it for the incremental strategies
+and skips the simulation for the cheap DirectGreedy/GreedyBeam probes, which
+global PnR validates on the complete routed world.
 
 ### 6.6 Mandatory gap: `PlaceBound::propagated_from`
 
