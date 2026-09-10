@@ -2,6 +2,9 @@
 
 ## Documentation
 
+- Project roadmap and tracking (read first): `docs/roadmap.md`
+- Repository architecture analysis (Phase 0 report): `docs/redstone_compiler_architecture.md`
+- Target capability and mapping policy design: `docs/technology_mapping_design.md`
 - Verilog RTL interface design notes: `docs/verilog_rtl_interface_design.md`
 - RCIR language and lowering design: `docs/intermediate_representation_design.md`
 - Physical design intent and local-cell recipes: `docs/physical_design_intent.md`

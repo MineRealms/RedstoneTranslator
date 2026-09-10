@@ -86,9 +86,38 @@ selectable target mappings or candidate profiles, not new Verilog syntax.
 ## Current supported vertical slice
 
 The implemented path covers small combinational modules, structural hierarchy,
-D latches, positive-edge DFF expansion, and incrementing registers used by the
-two-bit counter smoke test. Unsupported constructs must fail during validation
-or target mapping with a stage-specific diagnostic.
+D latches, positive-edge and negative-edge DFF expansion, incrementing
+registers, and procedural `if`/`else`/`case` state machines.
+
+Frontend details:
+
+- `always` bodies may contain multiple statements in `begin`/`end` blocks.
+  Single-statement blocks are normalized away so the legacy AST shape is kept.
+- `if (...) ... else ...` and `case (...)`/`default` are parsed. `case` is
+  expanded into a priority `if`/`else` chain of equality tests (`Eq`) against
+  the selector. `if` conditions are full expressions.
+- `==` and `!=` are supported in expressions and lower through `Eq`
+  (`!=` becomes `not(Eq)`).
+- ANSI-style headers are supported:
+  `module m(input clk, input [3:0] a, output reg q, output y);`.
+- Single-bit selects of declared vectors are supported on expression
+  right-hand sides (`assign y = a[2];`, `q <= a[1];`). `LogicalValue::Slice`
+  carries the bit into lowering, where the mapper resolves it to the scalar
+  bit. Slices on assignment left-hand sides or instance connections are still
+  rejected.
+- `always @(posedge clk)` and `always @(negedge clk)` are supported; the
+  mapper places master/slave latches with swapped enables for negative edges.
+- Bare `reg` declarations declare internal signals.
+- A clocked process may assign several signals; each becomes its own DFF or
+  register with a per-signal next-value expression. Later assignments take
+  priority and unassigned paths hold the previous value.
+- A combinational process whose signals are assigned on every path (an
+  `if`/`else` or a `case` with `default`) lowers to pure combinational logic
+  (`SynthCell::Combinational`). A partially assigned signal still uses the
+  legacy D-latch pattern; other partial shapes fail with a diagnostic.
+
+Unsupported constructs must fail during validation or target mapping with a
+stage-specific diagnostic.
 
 See also:
 
