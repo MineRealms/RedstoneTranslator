@@ -3,6 +3,8 @@
 ## Documentation
 
 - Project roadmap and tracking (read first): `docs/roadmap.md`
+- Project status report (done / not done / current blocker): `docs/project_status.md`
+- CAD-style P&R migration design (branch `cad-refactor`): `docs/architecture.md`
 - Repository architecture analysis (Phase 0 report): `docs/redstone_compiler_architecture.md`
 - Cell library and physical contract design: `docs/cell_library_design.md`
 - Target capability and mapping policy design: `docs/technology_mapping_design.md`
