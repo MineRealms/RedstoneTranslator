@@ -12,6 +12,7 @@ pub mod policy;
 mod prepared_snapshot;
 pub mod progress;
 pub mod rcir;
+pub mod route_engine;
 pub mod router;
 pub mod search;
 pub mod topology;
