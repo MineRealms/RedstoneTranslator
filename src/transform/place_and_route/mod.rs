@@ -4,5 +4,6 @@ pub mod global_pnr;
 pub mod local_placer;
 pub mod place_bound;
 pub mod placed_node;
+pub mod placement_ir;
 pub mod sampling;
 pub mod utils;

@@ -163,6 +163,8 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | Step 2d | Library CLI, snapshot embedding, replay restore, halo in parity hash | 302 non-heavy tests |
 | Step 3a | Deterministic hierarchy flattening (nested, mixed, vector ports) | 306 non-heavy tests |
 | Step 3b | MappingSpec persistence: JSON, CLI flag, snapshot artifact | 308 non-heavy tests |
+| CAD-M0 | Benchmark set, baseline metrics, oversized-legacy-leaf dispatch fix | 312 non-heavy tests |
+| CAD-M1 | Placement IR + macro model (`MacroTemplate`/`MacroInstance`/`PhysicalNet`/`PinRef`) | 315 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are
