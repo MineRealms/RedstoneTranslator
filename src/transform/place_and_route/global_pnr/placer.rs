@@ -365,7 +365,7 @@ pub fn placement_candidates_resolved(
         let result = if let Some(intent) = intent {
             apply_placement_intent(topology, intent, candidates, &mut placed)
         } else {
-            validate_no_placement_overlap(&placed)
+            validate_no_placement_overlap(&placed, candidates)
         };
         match result {
             Ok(()) => push_unique_placement(&mut constrained, placed),
@@ -479,7 +479,7 @@ fn apply_placement_intent(
     }
 
     validate_placement_intent(topology, intent, candidates, placed)?;
-    validate_no_placement_overlap(placed)
+    validate_no_placement_overlap(placed, candidates)
 }
 
 fn placed_instance_mut<'a>(
@@ -556,15 +556,20 @@ fn validate_placement_intent(
     Ok(())
 }
 
-fn validate_no_placement_overlap(placed: &[PlacedModule]) -> eyre::Result<()> {
+fn validate_no_placement_overlap(
+    placed: &[PlacedModule],
+    candidates: &[LayoutCandidate],
+) -> eyre::Result<()> {
     for (index, left) in placed.iter().enumerate() {
+        let left_bbox = candidates[left.candidate_index].placement_bbox();
         for right in placed.iter().skip(index + 1) {
-            let overlaps = left.origin.0 < right.origin.0 + right.bbox.width()
-                && right.origin.0 < left.origin.0 + left.bbox.width()
-                && left.origin.1 < right.origin.1 + right.bbox.depth()
-                && right.origin.1 < left.origin.1 + left.bbox.depth()
-                && left.origin.2 < right.origin.2 + right.bbox.height()
-                && right.origin.2 < left.origin.2 + left.bbox.height();
+            let right_bbox = candidates[right.candidate_index].placement_bbox();
+            let overlaps = left.origin.0 < right.origin.0 + right_bbox.width()
+                && right.origin.0 < left.origin.0 + left_bbox.width()
+                && left.origin.1 < right.origin.1 + right_bbox.depth()
+                && right.origin.1 < left.origin.1 + left_bbox.depth()
+                && left.origin.2 < right.origin.2 + right_bbox.height()
+                && right.origin.2 < left.origin.2 + left_bbox.height();
             if overlaps {
                 eyre::bail!(
                     "physical constraints overlap instances `{}` and `{}`",
@@ -1173,8 +1178,9 @@ fn place_candidates_on_shelves_in_order(
 
     for &candidate_index in order {
         let candidate = &candidates[candidate_index];
-        let width = candidate.bbox.width();
-        let depth = candidate.bbox.depth();
+        let placement_bbox = candidate.placement_bbox();
+        let width = placement_bbox.width();
+        let depth = placement_bbox.depth();
 
         if cursor_x > GLOBAL_PLACEMENT_MARGIN && cursor_x + width > config.shelf_width {
             cursor_x = GLOBAL_PLACEMENT_MARGIN;
@@ -1213,8 +1219,8 @@ fn place_candidates_on_grid_in_order(
         if row_depths.len() <= row {
             row_depths.push(0);
         }
-        column_widths[column] = column_widths[column].max(candidate.bbox.width());
-        row_depths[row] = row_depths[row].max(candidate.bbox.depth());
+        column_widths[column] = column_widths[column].max(candidate.placement_bbox().width());
+        row_depths[row] = row_depths[row].max(candidate.placement_bbox().depth());
     }
 
     let mut column_offsets = vec![GLOBAL_PLACEMENT_MARGIN; columns];
@@ -1528,6 +1534,7 @@ mod tests {
             occupied_cells: HashSet::new(),
             blocked_cells: HashSet::new(),
             cost: LayoutCandidateCost::default(),
+            halo: 0,
         }
     }
 
@@ -1927,5 +1934,36 @@ mod tests {
 
         assert!(overlapping > separated);
         assert_eq!(separated, 0);
+    }
+
+    #[test]
+    fn placement_halo_reserves_space_between_candidates() {
+        let mut left = test_candidate("left", &[]);
+        left.halo = 3;
+        let right = test_candidate("right", &[]);
+        let placed = vec![
+            PlacedModule {
+                module_name: "left".to_owned(),
+                candidate_index: 0,
+                origin: Position(0, 0, 0),
+                bbox: left.bbox,
+            },
+            PlacedModule {
+                module_name: "right".to_owned(),
+                candidate_index: 1,
+                origin: Position(6, 0, 0),
+                bbox: right.bbox,
+            },
+        ];
+
+        // The physical boxes are adjacent, but the left halo extends into the
+        // right slot, so the placement is rejected.
+        let error = validate_no_placement_overlap(&placed, &[left.clone(), right.clone()])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("overlap"), "{error}");
+
+        left.halo = 0;
+        assert!(validate_no_placement_overlap(&placed, &[left, right]).is_ok());
     }
 }

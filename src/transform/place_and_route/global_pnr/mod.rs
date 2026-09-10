@@ -673,9 +673,13 @@ fn prepare_routable_module_with_topology(
         progress.stage(1, 4, "generate leaf layout candidates");
         let candidate_config = config.candidate.effective_for_definition(&module.name);
         let candidate_config = candidate_config_for_routable_child(module, &candidate_config);
+        let contract = config
+            .candidate
+            .effective_contract_for_definition(&module.name);
         let candidates = generate_routable_module_candidates_with_progress_label(
             module,
             &candidate_config,
+            contract.as_ref(),
             config.show_progress.then_some(module.name.as_str()),
         )?;
         if candidates.is_empty() {
@@ -1510,7 +1514,11 @@ fn prepare_routable_child_candidate_sets(
         }
         let base_config = config.candidate.effective_for_definition(&child.name);
         let child_config = candidate_config_for_routable_child(child, &base_config);
-        let persistent_key = routable_candidate_shape_fingerprint(child, &child_config);
+        let contract = config
+            .candidate
+            .effective_contract_for_definition(&child.name);
+        let persistent_key =
+            routable_candidate_shape_fingerprint(child, &child_config, contract.as_ref());
         let persistent_hit = std::cell::Cell::new(false);
         let candidate_started = Instant::now();
         let (candidate_set_index, cache_hit) =
@@ -1530,6 +1538,7 @@ fn prepare_routable_child_candidate_sets(
                 let candidates = generate_routable_module_candidates_with_progress_label(
                     child,
                     &child_config,
+                    contract.as_ref(),
                     config.show_progress.then_some(instance.name.as_str()),
                 )?;
                 if let Some(root) = config.candidate_cache_dir.as_deref()
@@ -1650,7 +1659,7 @@ impl ChildCandidateCache {
         config: &UnitCandidateConfig,
         generate: impl FnOnce() -> eyre::Result<Vec<LayoutCandidate>>,
     ) -> eyre::Result<(Vec<LayoutCandidate>, bool)> {
-        let key = routable_candidate_shape_fingerprint(module, config);
+        let key = routable_candidate_shape_fingerprint(module, config, None);
         let (index, reused) = self.get_or_generate_index(&key, generate)?;
         Ok((
             relabel_candidates(&self.entries[index].candidates, &module.name),
@@ -1673,16 +1682,21 @@ fn relabel_candidates(candidates: &[LayoutCandidate], module_name: &str) -> Vec<
 fn routable_candidate_shape_fingerprint(
     module: &RoutableModule,
     config: &UnitCandidateConfig,
+    contract: Option<
+        &crate::transform::place_and_route::global_pnr::cell_library::CellPhysicalContract,
+    >,
 ) -> String {
     debug_parity_hash(&(
-        "routable-local-candidate-cache-v2",
-        // A candidate is only reusable when the compiler, the target, and the
-        // candidate policy that produced it are identical.
+        "routable-local-candidate-cache-v3",
+        // A candidate is only reusable when the compiler, the target, the
+        // candidate policy, and the physical contract that produced it are
+        // identical.
         env!("CARGO_PKG_VERSION"),
         crate::ir::ROUTABLE_IR_TARGET,
         &module.ports,
         &module.body,
         config,
+        contract,
     ))
 }
 
@@ -1873,12 +1887,18 @@ mod tests {
             body: crate::ir::RoutableModuleBody::Leaf { nodes: Vec::new() },
         };
         let config = UnitCandidateConfig::default();
-        let key = routable_candidate_shape_fingerprint(&module, &config);
-        assert_eq!(key, routable_candidate_shape_fingerprint(&module, &config));
+        let key = routable_candidate_shape_fingerprint(&module, &config, None);
+        assert_eq!(
+            key,
+            routable_candidate_shape_fingerprint(&module, &config, None)
+        );
 
         let mut renamed = module.clone();
         renamed.ports[0].name = "b".to_owned();
-        assert_ne!(key, routable_candidate_shape_fingerprint(&renamed, &config));
+        assert_ne!(
+            key,
+            routable_candidate_shape_fingerprint(&renamed, &config, None)
+        );
 
         let different_config = UnitCandidateConfig {
             max_candidates: config.max_candidates + 1,
@@ -1886,7 +1906,17 @@ mod tests {
         };
         assert_ne!(
             key,
-            routable_candidate_shape_fingerprint(&module, &different_config)
+            routable_candidate_shape_fingerprint(&module, &different_config, None)
+        );
+
+        let contract =
+            crate::transform::place_and_route::global_pnr::cell_library::CellPhysicalContract {
+                halo: 1,
+                ..Default::default()
+            };
+        assert_ne!(
+            key,
+            routable_candidate_shape_fingerprint(&module, &config, Some(&contract))
         );
     }
 

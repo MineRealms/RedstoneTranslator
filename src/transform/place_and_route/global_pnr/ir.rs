@@ -139,6 +139,10 @@ pub struct LayoutCandidate {
     pub occupied_cells: HashSet<Position>,
     pub blocked_cells: HashSet<Position>,
     pub cost: LayoutCandidateCost,
+    /// Empty cells that must stay free after the candidate, from the cell
+    /// library contract. Global placement reserves this space; the physical
+    /// world itself is unchanged.
+    pub halo: usize,
 }
 
 impl LayoutCandidate {
@@ -171,7 +175,18 @@ impl LayoutCandidate {
             occupied_cells,
             blocked_cells: HashSet::new(),
             cost,
+            halo: 0,
         })
+    }
+
+    /// Bounding box used for placement slot sizing and overlap checks: the
+    /// physical bounding box plus the contract halo on the trailing faces.
+    pub fn placement_bbox(&self) -> BoundingBox {
+        let mut bbox = self.bbox;
+        bbox.max.0 += self.halo;
+        bbox.max.1 += self.halo;
+        bbox.max.2 += self.halo;
+        bbox
     }
 }
 
@@ -234,6 +249,7 @@ mod tests {
                 height,
                 ..Default::default()
             },
+            halo: 0,
         }
     }
 

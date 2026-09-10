@@ -302,16 +302,20 @@ pub(super) fn prepare_config_fingerprint(
 ) -> String {
     let mut canonical = normalized_candidate_policies(config, topology)
         .into_iter()
-        .map(|(_, policy)| {
+        .map(|(definition, policy)| {
             let input_positions = policy
                 .input_constraints
                 .input_positions()
                 .map(|(name, positions)| (name.to_owned(), positions.to_vec()))
                 .collect::<std::collections::BTreeMap<_, _>>();
+            let contract = config
+                .candidate
+                .effective_contract_for_definition(&definition);
             format!(
-                "{:?}|{:?}",
+                "{:?}|{:?}|{:?}",
                 super::rcir::candidate_spec_from_policy(&policy),
-                input_positions
+                input_positions,
+                contract
             )
         })
         .collect::<Vec<_>>();

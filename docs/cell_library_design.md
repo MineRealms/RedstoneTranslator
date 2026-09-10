@@ -60,6 +60,25 @@ exactly the same expressiveness as an embedded `@pnr.candidate` profile.
 `from_json` rejects any other format string. A dedicated `*.rcell` text syntax
 can be added later; JSON is the stable artifact for now.
 
+## Contract consumption
+
+The contract is resolved from the library by definition name and is applied
+during candidate generation and global placement:
+
+- `requires_input_isolation` / `requires_output_isolation` force the
+  corresponding `PortConnection::InputDiode` / `OutputDiode` on generated
+  candidate ports, in addition to the sequential-leaf default.
+- `halo` is recorded on every generated `LayoutCandidate` and reserved by
+  global placement: shelf and grid heuristics size slots with
+  `LayoutCandidate::placement_bbox()`, and overlap validation inflates each
+  placed module by its halo. The physical world and assembled blocks are
+  unchanged.
+- The contract is part of both the preparation fingerprint and the persistent
+  candidate cache key (`routable-local-candidate-cache-v3`), so a contract-only
+  change invalidates prepared snapshots and cached candidates.
+- `allowed_transforms` and `max_delay` are recorded but not consumed yet:
+  placement does not transform candidates, and routing has no delay model.
+
 ## Not implemented yet
 
 - Named implementation variants of the logical target mapping
@@ -68,9 +87,6 @@ can be added later; JSON is the stable artifact for now.
   implementation graph.
 - Recipe constraints (port faces, ordering, corridors) and Pareto objectives
   per recipe; see `physical_design_intent.md`.
-- Cache keys keyed by implementation name. The cache fingerprint already
-  covers compiler version, target, module shape, and the resolved candidate
-  policy, which includes the library entry.
 - Auto-populated built-ins for the special cases the compiler already knows
   (for example the D-latch child policy).
 
@@ -81,4 +97,7 @@ can be added later; JSON is the stable artifact for now.
 - JSON round-trip preserves candidate policy and contract,
 - unsupported format strings are rejected,
 - a library entry overrides the default policy but not an explicit
-  definition override.
+  definition override,
+- contract resolution returns the library contract for matching definitions,
+- generated candidates carry the contract halo and forced diode connections,
+- placement overlap validation rejects slots that violate a halo.

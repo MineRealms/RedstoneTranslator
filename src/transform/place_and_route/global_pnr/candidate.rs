@@ -9,6 +9,7 @@ use crate::graph::{Graph, GraphNodeKind};
 use crate::ir::{graph_from_routable_leaf, RoutableModule, RoutablePortDirection};
 use crate::output::{OutputEndpoint, PlacedWorld};
 use crate::transform::place_and_route::detailed_router;
+use crate::transform::place_and_route::global_pnr::cell_library::CellPhysicalContract;
 use crate::transform::place_and_route::global_pnr::ir::{
     pareto_frontier, LayoutCandidate, PhysicalPort, PhysicalPortDirection, PortConnection,
 };
@@ -105,6 +106,18 @@ impl CandidatePolicySet {
         }
         policy
     }
+    /// Physical contract of the cell library implementation matching a
+    /// definition, if any. An explicit definition override changes the search
+    /// policy but the library contract still describes the variant.
+    pub fn effective_contract_for_definition(
+        &self,
+        definition: &str,
+    ) -> Option<crate::transform::place_and_route::global_pnr::cell_library::CellPhysicalContract>
+    {
+        self.cell_library
+            .implementation_for_definition(definition)
+            .map(|implementation| implementation.contract.clone())
+    }
 }
 
 impl Default for CandidatePolicySet {
@@ -148,6 +161,7 @@ impl Default for UnitCandidateConfig {
 pub fn generate_routable_module_candidates_with_progress_label(
     module: &RoutableModule,
     config: &UnitCandidateConfig,
+    contract: Option<&CellPhysicalContract>,
     progress_label: Option<&str>,
 ) -> eyre::Result<Vec<LayoutCandidate>> {
     let graph = graph_from_routable_leaf(module)?;
@@ -165,7 +179,7 @@ pub fn generate_routable_module_candidates_with_progress_label(
             )
         })
         .collect();
-    generate_unit_candidates(&module.name, graph, ports, config, progress_label)
+    generate_unit_candidates(&module.name, graph, ports, config, contract, progress_label)
 }
 
 #[derive(Clone, Debug)]
@@ -190,6 +204,7 @@ fn generate_unit_candidates(
     graph: Graph,
     ports: Vec<CandidatePort>,
     config: &UnitCandidateConfig,
+    contract: Option<&CellPhysicalContract>,
     progress_label: Option<&str>,
 ) -> eyre::Result<Vec<LayoutCandidate>> {
     let graph = LogicGraph { graph }.prepare_place()?;
@@ -223,6 +238,7 @@ fn generate_unit_candidates(
         let (world, physical_ports) = switchless_candidate_layout(
             &ports,
             contains_sequential,
+            contract,
             &config.input_constraints,
             placed.world,
             &placed.inputs,
@@ -231,11 +247,12 @@ fn generate_unit_candidates(
         if !candidate_ports_cover_module_ports(&ports, &physical_ports) {
             continue;
         }
-        candidates.push(LayoutCandidate::from_world(
-            module_name.to_owned(),
-            world,
-            physical_ports,
-        )?);
+        let mut candidate =
+            LayoutCandidate::from_world(module_name.to_owned(), world, physical_ports)?;
+        if let Some(contract) = contract {
+            candidate.halo = contract.halo;
+        }
+        candidates.push(candidate);
     }
     Ok(pareto_frontier(candidates, config.max_candidates))
 }
@@ -340,6 +357,7 @@ fn candidate_matches_truth_table(
 fn switchless_candidate_layout(
     module_ports: &[CandidatePort],
     contains_sequential: bool,
+    contract: Option<&CellPhysicalContract>,
     input_constraints: &LocalPlacerInputConstraints,
     mut world: World3D,
     inputs: &[OutputEndpoint],
@@ -348,8 +366,11 @@ fn switchless_candidate_layout(
     let mut ports = Vec::new();
     // Sequential child layout은 내부 feedback/state signal이 외부 route와 직접
     // 합쳐지면 back-power 때문에 latch 상태가 깨질 수 있어서 diode 연결을 요구한다.
-    let needs_output_isolation = contains_sequential;
-    let needs_input_isolation = contains_sequential;
+    // A cell library contract can require the same isolation explicitly.
+    let needs_output_isolation =
+        contains_sequential || contract.is_some_and(|contract| contract.requires_output_isolation);
+    let needs_input_isolation =
+        contains_sequential || contract.is_some_and(|contract| contract.requires_input_isolation);
     let use_direct_input_ports = !contains_sequential
         && module_ports
             .iter()
@@ -737,13 +758,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn generated_candidates_form_a_pareto_frontier() -> eyre::Result<()> {
+    fn inverter_module() -> crate::ir::RoutableModule {
         use crate::ir::{
             RoutableModuleBody, RoutableNode, RoutableNodeKind, RoutablePort, RoutablePortDirection,
         };
 
-        let module = crate::ir::RoutableModule {
+        crate::ir::RoutableModule {
             name: "inv".to_owned(),
             ports: vec![
                 RoutablePort {
@@ -781,7 +801,12 @@ mod tests {
                     },
                 ],
             },
-        };
+        }
+    }
+
+    #[test]
+    fn generated_candidates_form_a_pareto_frontier() -> eyre::Result<()> {
+        let module = inverter_module();
         let config = UnitCandidateConfig {
             dim: DimSize(6, 6, 3),
             max_candidates: 4,
@@ -793,7 +818,7 @@ mod tests {
         };
 
         let candidates =
-            generate_routable_module_candidates_with_progress_label(&module, &config, None)?;
+            generate_routable_module_candidates_with_progress_label(&module, &config, None, None)?;
 
         assert!(
             !candidates.is_empty(),
@@ -811,5 +836,76 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn contract_halo_and_isolation_reach_generated_candidates() -> eyre::Result<()> {
+        use super::super::cell_library::CellPhysicalContract;
+
+        let module = inverter_module();
+        let contract = CellPhysicalContract {
+            halo: 2,
+            requires_output_isolation: true,
+            ..Default::default()
+        };
+        let config = UnitCandidateConfig {
+            dim: DimSize(6, 6, 3),
+            max_candidates: 2,
+            local_config: LocalPlacerConfig {
+                materialize_outputs: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let candidates = generate_routable_module_candidates_with_progress_label(
+            &module,
+            &config,
+            Some(&contract),
+            None,
+        )?;
+
+        assert!(!candidates.is_empty());
+        for candidate in &candidates {
+            assert_eq!(candidate.halo, 2);
+            assert!(candidate.placement_bbox().width() > candidate.bbox.width());
+            let output = candidate
+                .ports
+                .iter()
+                .find(|port| port.direction == PhysicalPortDirection::Output)
+                .expect("output port");
+            assert_eq!(output.connection, PortConnection::OutputDiode);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn effective_contract_resolves_from_the_cell_library() {
+        use super::super::cell_library::{CellImplementation, CellLibrary, CellPhysicalContract};
+
+        let library = CellLibrary {
+            implementations: vec![CellImplementation {
+                name: "inv.isolated".to_owned(),
+                definitions: vec!["inv".to_owned()],
+                candidate: UnitCandidateConfig::default(),
+                contract: CellPhysicalContract {
+                    halo: 1,
+                    requires_input_isolation: true,
+                    ..Default::default()
+                },
+                priority: 0,
+            }],
+            ..CellLibrary::redstone_v1()
+        };
+        let policies = CandidatePolicySet::default().with_cell_library(library);
+
+        let contract = policies
+            .effective_contract_for_definition("inv")
+            .expect("matching contract");
+        assert_eq!(contract.halo, 1);
+        assert!(contract.requires_input_isolation);
+        assert!(policies
+            .effective_contract_for_definition("other")
+            .is_none());
     }
 }

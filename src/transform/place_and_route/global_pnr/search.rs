@@ -208,6 +208,7 @@ mod tests {
                 bbox_volume: volume,
                 ..Default::default()
             },
+            halo: 0,
         }
     }
 

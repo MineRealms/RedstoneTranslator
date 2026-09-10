@@ -88,9 +88,10 @@ a reusable library of verified physical candidates".
       `CellLibrary`/`CellImplementation`/`CellPhysicalContract`, versioned JSON,
       resolved through `CandidatePolicySet` and covered by the preparation
       fingerprint.
-- [ ] Add physical-contract fields to generated candidates (halo, required
-      isolation, legal transforms, delay vector) and consume them in global
-      P&R.
+- [x] Consume the contract in P&R: forced input/output diode isolation,
+      halo reserved by placement slot sizing and overlap validation, and the
+      contract included in the preparation fingerprint and persistent cache
+      key. `allowed_transforms` and `max_delay` are recorded but not consumed.
 - [ ] Named implementation variants of the logical target mapping
       (`std.xor -> xor.nor_network`, ...).
 - [ ] Auto-populate built-in library entries for the compiler's known special
@@ -139,6 +140,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | Step 4b | `==`/`!=`, ANSI headers, bit selects | 288 non-heavy tests |
 | Step 2a | Candidate metric vector, Pareto frontier, cache identity hardening | 293 non-heavy tests |
 | Step 2b | Cell library model, physical contract, JSON round-trip, policy resolution | 298 non-heavy tests |
+| Step 2c | Contract consumption: isolation, halo placement, fingerprints | 301 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

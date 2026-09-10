@@ -304,6 +304,7 @@ mod tests {
             occupied_cells: HashSet::new(),
             blocked_cells: HashSet::new(),
             cost: LayoutCandidateCost::default(),
+            halo: 0,
         }
     }
 
