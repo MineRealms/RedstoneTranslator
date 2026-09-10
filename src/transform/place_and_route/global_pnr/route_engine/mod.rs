@@ -4,12 +4,15 @@
 //! identical while `router.rs` keeps net ordering, fanout handling, topology
 //! orchestration, and simulator validation.
 
+mod congestion;
 mod cost;
 mod engine;
 mod goal;
 mod queue;
 mod state;
 pub(crate) mod validation;
+
+pub use congestion::{CongestionConfig, CongestionMap};
 
 pub(crate) use engine::{
     adapter_allowed_contacts, adapter_touches_forbidden_existing_signal, added_route_blocks,
