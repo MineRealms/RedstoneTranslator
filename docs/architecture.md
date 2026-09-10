@@ -362,7 +362,9 @@ reroutes them with penalties. Only routes with the default simple power
 contract are rerouted; adapter routes with extra required positions are left
 alone. Every accepted reroute must keep its power contract on the assembled
 world, and candidates whose assembly would leave unsupported redstone are
-rejected. Enable it with `GlobalRoutingConfig::pathfinder` (default off); the
+rejected. Rejected candidates add history penalties on their cells, so the
+next pass steers away from the failing corridor (simulator feedback).
+Enable it with `GlobalRoutingConfig::pathfinder` (default off); the
 setting round-trips through RCIR snapshots and the text format.
 
 ### 8.1 Minecraft-specific congestion

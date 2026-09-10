@@ -121,6 +121,7 @@ pub(crate) fn negotiate_routed_nets(
             candidate[index] = new_route;
             let mut candidate_world = assemble_world_with_routes_raw(base_world, &candidate);
             if !redstone_supports_are_consistent(&candidate_world) {
+                map.add_history(&candidate[index].path);
                 map.add_route(&old_path);
                 continue;
             }
@@ -130,6 +131,7 @@ pub(crate) fn negotiate_routed_nets(
                 current = candidate;
                 rerouted += 1;
             } else {
+                map.add_history(&candidate[index].path);
                 map.add_route(&old_path);
             }
         }

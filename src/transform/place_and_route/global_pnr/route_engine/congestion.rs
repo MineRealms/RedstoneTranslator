@@ -80,6 +80,14 @@ impl CongestionMap {
         }
     }
 
+    /// Penalizes every cell of a path in history. Used when a routed candidate
+    /// fails simulation, so the next pass steers away from those cells.
+    pub fn add_history(&mut self, path: &[Position]) {
+        for &position in path {
+            *self.history.entry(position).or_default() += 1;
+        }
+    }
+
     /// Overused cells in deterministic order, for rip-up decisions.
     pub fn overused_cells(&self) -> Vec<Position> {
         let mut cells = self
@@ -152,5 +160,16 @@ mod tests {
         map.add_route(&[position, position]);
 
         assert_eq!(map.cell_cost(position, &CongestionConfig::default()), 0);
+    }
+
+    #[test]
+    fn explicit_history_penalty_outlives_rip_up() {
+        let mut map = CongestionMap::new();
+        let path = [Position(0, 0, 0), Position(1, 0, 0)];
+        map.add_history(&path);
+
+        assert_eq!(map.usage(Position(1, 0, 0)), 0);
+        assert_eq!(map.history(Position(1, 0, 0)), 1);
+        assert_eq!(map.cell_cost(Position(1, 0, 0), &config(10, 5)), 5);
     }
 }

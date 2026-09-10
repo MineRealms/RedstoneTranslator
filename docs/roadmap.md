@@ -188,6 +188,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M4.1 | Congestion-aware search: per-state `extra_cost`, present/history penalties in `RouteCostModel`, empty-map parity and detour tests | 344 non-heavy tests |
 | CAD-M4.2 | Negotiated-congestion loop: fold present overuse into history, rip up conflicting nets, reroute until clean or budget | 348 non-heavy tests |
 | CAD-M4.3 | Router post-pass behind `GlobalRoutingConfig::pathfinder`: contract-gated reroutes, RCIR/JSON/text persistence, manual full-flow harness | 353 non-heavy tests |
+| CAD-M4.4 | Simulator feedback: rejected reroutes add history penalties so later passes avoid the failing corridor | 354 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are
