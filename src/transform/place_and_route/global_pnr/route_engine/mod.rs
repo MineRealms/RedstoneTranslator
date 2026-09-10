@@ -8,6 +8,7 @@ mod congestion;
 mod cost;
 mod engine;
 mod goal;
+mod pathfinder;
 mod queue;
 mod state;
 pub(crate) mod validation;
@@ -25,6 +26,9 @@ pub(crate) use engine::{
 pub use engine::{
     route_point_to_point, route_point_to_point_with_cost_model_and_congestion,
     route_point_to_point_with_strategy,
+};
+pub use pathfinder::{
+    negotiate_routes, PathfinderConfig, PathfinderNet, PathfinderResult, PathfinderRoute,
 };
 pub(crate) use state::{
     initial_signal_strength, is_route_terminal, powered_route_source, PoweredRouteSource,

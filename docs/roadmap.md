@@ -186,6 +186,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M3.5 | Engine comparison harness (`MCHDL_BENCH` per-process, bounded config); `not_chain` Legacy 516 ms / Annealed 498 ms; composite full-flow runs deferred (32 GB host OOMs) | 338 non-heavy tests |
 | CAD-M4.0 | PathFinder congestion resources: per-cell usage, present overuse, accumulated history, deterministic rip-up queries | 342 non-heavy tests |
 | CAD-M4.1 | Congestion-aware search: per-state `extra_cost`, present/history penalties in `RouteCostModel`, empty-map parity and detour tests | 344 non-heavy tests |
+| CAD-M4.2 | Negotiated-congestion loop: fold present overuse into history, rip up conflicting nets, reroute until clean or budget | 348 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are
