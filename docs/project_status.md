@@ -1,12 +1,14 @@
 # Project Status Report
 
-> Branch: `cad-refactor` · Base commit: `15294b3` · Last update: `79b6ff6` (M1)
+> Branch: `cad-refactor` · Base commit: `15294b3` · Last update: `f99f204` (M0.5 plan)
 > Date: 2026-09-10
 >
 > This report is the hand-off snapshot before the CAD-style placer refactor.
 > It lists what is complete, what is not, and the precise problem the refactor
 > must solve. The migration plan lives in `docs/architecture.md`; current
-> progress lives in `docs/roadmap.md`.
+> progress lives in `docs/roadmap.md`, and the memory refactor plan lives in
+> `docs/memory_refactor_plan.md`. Sections 1-2.4 describe the pre-refactor
+> baseline; section 2.5 tracks the refactor.
 
 ## 1. Environment
 
@@ -72,7 +74,9 @@
 
 ### 2.4 Verification
 
-- 311 non-heavy tests pass in debug and release (5 ignored, 8 filtered).
+- The non-heavy suite currently passes 359 tests in release (single thread,
+  `--skip test_generate_component`; 8 heavy component tests skipped). The 311
+  figure in the original snapshot predates M2-M5.
 - FSM-class designs lower end to end to a `ResolvedPnrTopology`
   (`ir::mapping::tests::fsm_with_case_and_combinational_output_lowers_to_a_pnr_topology`).
 - Constant folding in `prepare_place`
@@ -102,7 +106,16 @@
   (normalized verified layout, pins, escape cells, forbidden cells, halo,
   rotation set), `MacroInstance`, `PinRef`, `PhysicalNet`, and
   `PlacementProblem` (composition, instantiation into `World3D`, HPWL).
-- **Next: M2** router core extraction (M2.0-M2.3 in `docs/architecture.md`).
+- **M2-M5 (commits `1de49c4`..`1a15e09`)**: router core extraction with reverse
+  propagation, cost model, and simulator-backed validator (M2); placement IR
+  facings/legality, deterministic initial placement, simulated annealing, and
+  the flow adapter behind `PlacementEngine::{Legacy, Annealed}` (M3);
+  PathFinder congestion resources, congestion-aware search, negotiated loop,
+  router post-pass, and simulator feedback behind
+  `GlobalRoutingConfig::pathfinder` (M4); compression ladder and CLI
+  `--compress` (M5). Per-commit evidence is in `docs/roadmap.md`.
+- **M0.5 (planned)**: memory architecture refactor; see
+  `docs/memory_refactor_plan.md`.
 
 ## 3. What is not complete
 

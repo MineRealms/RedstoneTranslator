@@ -61,8 +61,9 @@ Viewer uses it for Godbolt-style hover highlighting and click-to-pin navigation
 between the three panes.
 
 `pnr/config.json` is the generated, typed expansion of the effective PnR policy
-plus runtime-only metadata. It is diagnostic output; the source of truth for a
-recompile is `ir/routable.rcir`.
+plus runtime-only metadata. Routing stages include the optional `pathfinder`
+block (max iterations, present/history penalties) added in M4.3. It is
+diagnostic output; the source of truth for a recompile is `ir/routable.rcir`.
 
 `candidates/` contains every verified local candidate retained by the prepared
 design, deduplicated by structural candidate set rather than copied once per

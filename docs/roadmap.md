@@ -60,17 +60,15 @@ annealing, verified macro library (primitive and logic macros), unified 3D A*
 router with pin escape, coarse global routing, PathFinder negotiated
 congestion, conflict learning, redstone validation, and a compression ladder.
 Milestones are M0 benchmarks, M1 placement IR + macros, M2 router extraction,
-M3 placement, M4 repair, M5 compression. The IR/mapping/frontend work below is
+M3 placement, M4 negotiated congestion, M5 compression. The IR/mapping/frontend work below is
 preserved; the CAD track replaces only the physical search engine behind the
 `LayoutCandidate` boundary.
 
-M2 is an extraction, not a rewrite: M2.0 moves the existing queue/state/
-expansion into `route_engine/` with identical behavior, M2.1 implements the
-missing `PlaceBound::propagated_from` rules (Torch/Repeater/RedstoneBlock/
-Switch), M2.2 makes the cost model explicit with defaults equal to the current
-costs, and M2.3 introduces the `RouteValidator` interface backed by the
-existing simulator. Congestion, SA feedback, and escape scoring stay out of
-M2.
+M0-M5 are implemented; see the status log below for per-commit evidence. The
+next step is M0.5, the memory architecture refactor: both search frontiers
+(`PlacerQueue` and `RouteSearchState`) currently retain full `World3D`
+snapshots, which is the OOM bottleneck. The plan and execution tracker live in
+`docs/memory_refactor_plan.md`.
 
 ### Step 1 - General mapper + target capabilities + mapping policy (DONE)
 

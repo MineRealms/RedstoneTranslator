@@ -57,7 +57,7 @@ The first implementation supports only one exposed sequential output in the top-
 
 ## Current RS Latch Placement
 
-`src/sequential/layout.rs` defines the initial `SequentialMacro` interface and one simulator-validated RS latch macro candidate. RS latch macro candidates are gated by successful recognition of the RS latch feedback core in the primitive `inner_graph`.
+`src/sequential/layout.rs` defines the initial `SequentialMacro` interface and one simulator-validated RS latch macro candidate. RS latch macro candidates are gated by successful recognition of the RS latch feedback core in the primitive `inner_graph`. The RS latch macro is 8x6x3 with ports `s`, `r`, `q`, and `nq`; there is no prebuilt D latch macro, so D latches are produced by the gate-level search path.
 
 `LocalPlacer` now attempts a gate-level RS latch path when the primitive exposes a recognized RS latch core. That path places the two NOT torches with the normal torch/support helper, then routes the input and feedback sources so they independently drive the corresponding NOT support cobble. If the searched gate-level path cannot produce a candidate, the simulator-validated macro candidate remains available as a fallback so invalid NBT fixtures are not written.
 

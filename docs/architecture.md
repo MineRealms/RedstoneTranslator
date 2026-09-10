@@ -59,7 +59,7 @@ leaf* (and later the global placer), not the IR.
 
 The circuit IR is coordinate-free; the physical IR must be separate.
 
-Proposed module: `src/transform/place_and_route/placement_ir.rs`
+Module: `src/transform/place_and_route/placement_ir.rs`
 
 ```text
 MacroInstance
@@ -119,22 +119,21 @@ Extend the existing cell library instead of adding a parallel one:
 The existing hardcoded RS-latch macro and the `LayoutCandidate` generator
 become macro producers rather than special cases.
 
-## 5. Phase 3 — Placement: force-directed initial + simulated annealing
+## 5. Phase 3 — Placement: deterministic seed + simulated annealing
 
-Proposed module: `src/transform/place_and_route/sa_placer.rs`
+Module: `src/transform/place_and_route/sa_placer.rs`.
 
 Do **not** start annealing from random positions. The netlists are small and
 their topology matters; a random start wastes thousands of iterations.
 
 ### 5.1 Initial placement (deterministic)
 
-1. **Topological seed**: place macros in topological order along a space-filling
-   curve, respecting macro sizes (this is today's beam search without routing).
+1. **Topological seed**: place macros in connectivity order on a 3D shelf,
+   respecting macro sizes and spacing.
 2. **Barycenter pass**: repeatedly move each macro toward the average position
    of its connected pins until the movement falls below a threshold.
-3. **Force-directed relaxation**: spring attraction along nets, AABB repulsion
-   for overlap, optional z-axis bias to spread into the third dimension.
-   This naturally pulls `A, B, OR` together before any random search.
+3. **Overlap repair**: separate intersecting footprints deterministically, or
+   report the pairs that do not fit.
 
 The result is the SA starting point.
 
@@ -164,6 +163,17 @@ The existing beam-search placer stays available behind
 `GlobalPlacementConfig::engine` (`Legacy` by default, `Annealed` selects the
 new path) until the annealing path passes all benchmarks, then is deprecated.
 
+### 5.3 Implemented status (M3)
+
+The seed, barycenter pass, and overlap repair above are implemented. A separate
+force-directed stage was not needed: SA provides the refinement. SA moves are
+translate, swap, and spread; rotation stays identity because macros only allow
+`MacroRotation::None`. The cost model is `PlacementCostModel` with weights
+wire 1.0, bounding-box 0.1, blocked-pin 50.0, and overlap 100.0; congestion,
+pin-access, and region-pressure terms are not implemented. The output is the
+best legal solution, not a top-K set. `global_pnr/annealed.rs` adapts the
+selected `LayoutCandidate`s into macros and back into `PlacedModule`s.
+
 ## 6. Phase 4 — Detailed routing: extract the engine from the existing router
 
 M2 is **not** "write a new A*". The repository already routes with a unified
@@ -177,64 +187,51 @@ unchanged, and the new engine's default configuration must reproduce the old
 point-to-point results. No new heuristic, congestion, or escape scoring lands
 in M2.
 
-### 6.1 Module layout
+### 6.1 Module layout (as implemented)
 
-Small files under `src/transform/place_and_route/route_engine/`:
+Files under `src/transform/place_and_route/route_engine/`:
 
-- `state.rs`: `RouteState`, `RouteStep`, `ElectricalState`.
-- `cost.rs`: `RouteCostModel`.
-- `expansion.rs`: neighbor expansion from `PlaceBound` plus `detailed_router`.
-- `queue.rs`: the search queue (A*, beam, BFS) extracted from `router.rs`.
-- `engine.rs`: `RouteEngine::route(&RouteProblem)`.
-- `validation.rs`: `RouteValidator` trait and the fast rule checks.
+- `state.rs`: `RouteSearchState`, `PoweredRouteSource`, visited-key helpers.
+- `cost.rs`: `RouteCostModel` (step, turn, repeater, low-strength, congestion).
+- `queue.rs`: `RouteSearchQueue` (BFS, A*, DirectGreedy, GreedyBeam).
+- `goal.rs`: `RouteGoal`.
+- `engine.rs`: point-to-point entry points, expansion, forbidden contacts,
+  output adapters.
+- `congestion.rs`: `CongestionMap` and `CongestionConfig` (M4.0).
+- `pathfinder.rs`: standalone negotiated-congestion loop (M4.2).
+- `negotiation.rs`: router post-pass over routed nets (M4.3).
+- `validation.rs`: `RouteValidator`, `SimulatorRouteValidator`, power-contract
+  checks.
 
 `router.rs` keeps net ordering, fanout handling, topology logic, and calls the
 engine. `detailed_router.rs` keeps `ElectricalPath -> Minecraft blocks`.
 
-### 6.2 RouteProblem and RouteEndpoint
+### 6.2 RouteProblem and RouteEndpoint (not implemented as sketched)
+
+The extraction kept the original signatures: callers pass `&World3D`, source
+and sink positions, a strategy, and `additional_allowed_contacts` instead of a
+`RouteProblem`/`RouteEndpoint` struct. `MacroPin.escape` positions travel
+through `additional_allowed_contacts`; spatial facing exists on `MacroPin`
+(M3.0) but is not yet consumed by the router.
+
+### 6.3 Search state (as implemented, pending M0.5)
 
 ```rust
-pub struct RouteProblem<'a> {
-    pub world: &'a World3D,
-    pub source: RouteEndpoint,
-    pub sink: RouteEndpoint,
-    pub net_id: Option<NetId>,
-    pub constraints: RouteConstraints,
-}
-
-pub struct RouteEndpoint {
-    pub position: Position,
-    pub allowed_entries: Vec<Direction>,  // pin escape; empty = any
-    pub required_power: bool,
+pub(crate) struct RouteSearchState {
+    pub world: World3D,
+    pub terminal: Position,
+    pub route: Vec<Position>,
+    pub signal_strength: usize,
+    pub powered_taps: Vec<PoweredRouteSource>,
+    pub pending_bounds: Option<Vec<PlaceBound>>,
+    pub extra_cost: usize,
 }
 ```
 
-`allowed_entries` carries the macro pin escape positions that M1 already
-records. Spatial pin facing stays out of M2; `MacroPin.facing` lands in M3,
-where placement costs consume it.
-
-### 6.3 State and electrical mode
-
-```rust
-pub struct RouteState {
-    pub position: Position,
-    pub incoming: Option<Direction>,
-    pub electrical: ElectricalState,
-    pub cost: RouteCost,
-    pub path: Vec<RouteStep>,
-}
-
-pub enum ElectricalState {
-    Wire { strength: u8 },
-    Repeater { delay: u8 },
-    Torch,
-    HardPowered,
-}
-```
-
-Do not introduce a second signal-mode enum: the existing `PropagateType`
-(`Soft | Hard | Torch | Repeater`) is the mode type and maps directly onto
-`ElectricalState`.
+`ElectricalState` was not introduced: the existing `PropagateType`
+(`Soft | Hard | Torch | Repeater`) remains the mode type. The retained `world`
+is the main memory risk; `docs/memory_refactor_plan.md` (M0.5, Commit 4)
+replaces it with a cumulative block delta plus one scratch world per pop.
 
 ### 6.4 Cost model
 
@@ -244,14 +241,15 @@ pub struct RouteCostModel {
     pub turn_cost: usize,
     pub repeater_cost: usize,
     pub low_strength_penalty: usize,
+    pub congestion: CongestionConfig, // M4.1; zero by default
 }
 ```
 
 Parity defaults replicate the historical priority exactly: `step_cost = 1`,
 `turn_cost = 0`, `repeater_cost = 0`, and `low_strength_penalty = 4` applied
-when signal strength is at most two. The turn and repeater terms exist but
-stay zero until a benchmarked change enables them; congestion stays at zero
-until M4.
+when signal strength is at most two. The turn and repeater terms stay zero
+until a benchmarked change enables them. Congestion weights are wired through
+the search as of M4.1 and default to zero.
 
 ### 6.5 Two-level validation
 
@@ -282,47 +280,49 @@ pub(crate) trait RouteValidator {
 and skips the simulation for the cheap DirectGreedy/GreedyBeam probes, which
 global PnR validates on the complete routed world.
 
-### 6.6 Mandatory gap: `PlaceBound::propagated_from`
+### 6.6 Reverse propagation: `PlaceBound::propagated_from`
 
-`propagated_from` currently panics (`todo!()`) for Torch, Repeater,
-RedstoneBlock, and Switch. Reverse search, escape routing, and bidirectional
-heuristics all need predecessor enumeration. M2 implements these rules before
-the engine is switched on, covered by dedicated tests.
+Implemented in M2.1 (commit `75293d4`). The four previously panicking kinds now
+return predecessor bounds: a repeater reports the neighbor on its input side, a
+torch reports the hard power sources of its support cobble, and redstone blocks
+and switches report no inputs because they are primary sources. Direction
+follows the existing convention (from the predecessor toward the queried
+block). `Piston` remains `todo!()` because no cell uses pistons.
 
-### 6.7 M2 substeps and exit criteria
+### 6.7 M2 substeps and exit criteria (complete)
 
-- M2.0: extract queue/state/expansion into `route_engine/`; the old router
-  calls the extracted code with identical behavior.
-- M2.1: implement `propagated_from` for the four missing block kinds.
-- M2.2: make `RouteCostModel` explicit; defaults equal the old costs.
-- M2.3: add the `RouteValidator` interface and move the simulator contract
-  check behind it.
+- M2.0 (commit `1de49c4`): extracted queue/state/expansion into `route_engine/`;
+  the router delegates with identical behavior.
+- M2.1 (commit `75293d4`): implemented `propagated_from` for the four missing
+  block kinds.
+- M2.2 (commit `6016474`): made `RouteCostModel` explicit; defaults equal the
+  old costs.
+- M2.3 (commit `94648b3`): added the `RouteValidator` interface and moved the
+  simulator contract check behind it.
 
-Exit criteria: the new engine replaces the old point-to-point route; old/new
-parity on the same `(world, source, sink)` inputs; simulator validation
-passes; the cost model is pluggable; `propagated_from` is complete. Not
-required in M2: congestion, SA feedback, escape scoring, compression.
+Exit criteria met: the new engine replaces the old point-to-point route; parity
+holds on the same `(world, source, sink)` inputs; simulator validation passes;
+the cost model is pluggable; `propagated_from` is complete for the four kinds.
+Congestion, SA feedback, escape scoring, and compression landed in later
+milestones.
 
-### 6.8 Pin escape routing
+### 6.8 Pin escape routing (partially implemented)
 
 A* can find a theoretical path while the pin is physically boxed in by
-neighbouring macros. Placement must therefore score pin accessibility, not just
-pin existence.
+neighbouring macros. Placement should therefore score pin accessibility, not
+just pin existence.
 
-- After placement, build a per-pin **escape map**: flood-fill the free cells
-  adjacent to the pin (treating other macros as obstacles) and record
-  - the number of distinct escape directions,
-  - the distance to the nearest free routing channel,
-  - whether the pin is reachable from the other endpoints of its net.
-- Pin score: `0 = dead end`, `1 = risky`, `2 = normal`, `3+ = excellent`.
-- `blocked_pin_penalty` and `pin_access_penalty` in the placement cost consume
-  this score; a macro with any pin score 0 is rejected outright.
-- The detailed router starts from the pin's escape cells rather than from the
-  pin block itself, mirroring PCB escape routing.
-- Macros publish precomputed escape directions per pin (`pin_escape`) so the
-  map is cheap to build.
-- Spatial pin facing (`MacroPin.facing`) is a placement-cost input and lands in
-  M3; M2 only needs escape positions, exposed as `RouteEndpoint.allowed_entries`.
+Implemented today:
+
+- `MacroPin.escape` records the local escape cells from the candidate access
+  points; `MacroPin.facing` (M3.0) records the derived facing.
+- The SA placement cost counts blocked pins (empty escape, or every escape cell
+  out of bounds) with weight `blocked_pin_weight`.
+- `additional_allowed_contacts` passes escape positions into the point-to-point
+  router.
+
+Not implemented yet: flood-fill escape maps, pin score 0-3, routing that starts
+from escape cells instead of the pin block, and the `pin_access_penalty` term.
 
 ## 7. Phase 5 — Coarse global routing
 
@@ -331,6 +331,9 @@ pin existence.
 - Detailed routing is then constrained to those regions (with escape margins).
 - Replaces the current per-net greedy ordering as the first routing stage;
   region congestion becomes an input to the placement cost.
+
+Status: not implemented. M4 landed negotiated congestion at the detailed
+(voxel) level instead; region-level routing remains future work.
 
 ## 8. Phase 6 — Negotiated congestion (PathFinder-style)
 
@@ -398,6 +401,9 @@ Lightweight because circuits are small:
   conflicts, (c) candidate filtering during global PnR.
 - Bounded conflict store with deterministic eviction (oldest first).
 
+Status: not implemented. The negotiated post-pass and simulator feedback cover
+the routing side; placement-side conflict learning remains future work.
+
 ## 10. Phase 8 — Redstone validation
 
 After each routing attempt:
@@ -412,6 +418,13 @@ After each routing attempt:
 
 Validation is the acceptance gate for every engine output; invalid candidates
 are never cached or emitted.
+
+Status: implemented in the router (automatic repeater insertion, direction
+checks, short-circuit rejection) and in `route_engine::validation` (simulator
+power contract, release check, feedback-cycle check). Combinational candidates
+are additionally verified against the graph truth table during generation via
+`candidate_matches_truth_table`; sequential leaves are skipped there and rely
+on design verifiers.
 
 ## 11. Phase 9 — Compression
 
@@ -446,15 +459,18 @@ the remaining M5 work.
 2. **`LayoutCandidate` is the seam.** New engines produce candidates; the
    existing global PnR, cell library, cache, and snapshots consume them
    unchanged.
-3. **Feature switch.** `GlobalPnrConfig` gains
-   `placement_engine: Beam | Annealing` (default `Beam` until the new path
-   passes all benchmarks). No existing test changes behavior by default.
-4. **Incremental adoption.** Milestone 1 keeps the old router and only adds
-   the IR + macro layer. Milestone 2 adds the A* engine behind a flag.
-   Milestone 3 switches leaf candidate generation to annealing for a small
-   allowlist of shapes, then expands.
-5. **Tests stay green.** All 311 non-heavy tests and the existing snapshots
-   must keep passing at every milestone.
+3. **Feature switch.** `GlobalPlacementConfig::engine`
+   (`PlacementEngine::{Legacy, Annealed}`, default `Legacy`) selects the new
+   placement path; `GlobalRoutingConfig::pathfinder` (default `None`) enables
+   the negotiated post-pass; `--compress` runs the compression ladder. No
+   existing test changes behavior by default.
+4. **Incremental adoption.** M1 added the IR and macro layer; M2 extracted the
+   routing engine; M3 added deterministic initial placement and SA behind the
+   flag; M4 added negotiated congestion behind the flag; M5 added the
+   compression ladder and the CLI switch. The beam-search local placer and the
+   legacy global placement remain the default path.
+5. **Tests stay green.** The non-heavy suite (359 tests at the M0.5 baseline)
+   and the existing snapshots must keep passing at every step.
 6. **Deprecation.** The beam-search local placer is removed only after the
    new flow matches or beats it on every benchmark and the ignored smoke
    tests pass.
@@ -463,16 +479,18 @@ the remaining M5 work.
 
 The ordering below is deliberate: benchmarks first, then the router, then
 placement, then repair, then compression. Each milestone is a separate commit
-with its acceptance evidence.
+with its acceptance evidence. Status is tracked in `docs/roadmap.md`; the
+`Status` column below records the implementation state at the M0.5 baseline.
 
-| Milestone | Scope | Acceptance |
-| --- | --- | --- |
-| M0 | Benchmark set + baseline metrics harness | `not_chain`, `full_adder`, `dense_or_cone`, `fsm_1bit`, `fsm_2bit`, `random_10`, `random_40` all lower to a valid topology; baseline metrics recorded (leaves, prepared sizes, P&R success/time) |
-| M1 | Placement IR + macro model; old engine unchanged | New IR unit tests; all existing tests green; one primitive macro and one logic macro (full adder) round-trip through the IR |
-| M2 | Router core extraction: M2.0 extract queue/state/expansion, M2.1 reverse propagation rules, M2.2 explicit cost model, M2.3 validator interface | Old/new parity on the same `(world, source, sink)` inputs; simulator validation passes; cost model pluggable; `propagated_from` complete for Torch/Repeater/RedstoneBlock/Switch |
-| M3 | Macro placement: topological seed + force-directed + SA refinement, behind a flag | One-bit FSM leaf places; full adder and dense OR cone place; old engine still default |
-| M4 | Coarse global routing + PathFinder negotiated congestion + conflict feedback | Two-bit FSM and dense OR cone place deterministically; snapshot replay stable |
-| M5 | Compression ladder + new engine default | Compression reduces volume on benchmarks; old beam-search engine deprecated |
+| Milestone | Scope | Acceptance | Status |
+| --- | --- | --- | --- |
+| M0 | Benchmark set + baseline metrics harness | `not_chain`, `full_adder`, `dense_or_cone`, `fsm_1bit`, `fsm_2bit`, `random_10`, `random_40` all lower to a valid topology; baseline metrics recorded (leaves, prepared sizes, P&R success/time) | Done (`40adb27`); full P&R baseline still manual |
+| M1 | Placement IR + macro model; old engine unchanged | New IR unit tests; all existing tests green; one primitive macro and one logic macro (full adder) round-trip through the IR | Done (`79b6ff6`) |
+| M2 | Router core extraction: M2.0 extract queue/state/expansion, M2.1 reverse propagation rules, M2.2 explicit cost model, M2.3 validator interface | Old/new parity on the same `(world, source, sink)` inputs; simulator validation passes; cost model pluggable; `propagated_from` complete for Torch/Repeater/RedstoneBlock/Switch | Done (`1de49c4`..`94648b3`) |
+| M3 | Macro placement: deterministic seed + barycenter + SA refinement, behind a flag | One-bit FSM leaf places; full adder and dense OR cone place; old engine still default | Engine, benchmarks, and flow adapter done (`04b0898`..`12aa1e1`); full-flow evidence deferred (32 GB host) |
+| M4 | Coarse global routing + PathFinder negotiated congestion + conflict feedback | Two-bit FSM and dense OR cone place deterministically; snapshot replay stable | Congestion resources, search, loop, router post-pass, simulator feedback done (`a93ee77`..`e9e8ea0`); manual full-flow harness pending a larger host |
+| M5 | Compression ladder + new engine default | Compression reduces volume on benchmarks; old beam-search engine deprecated | Ladder and CLI done (`859e575`, `1a15e09`); benchmark evidence and deprecation pending |
+| M0.5 | Memory architecture refactor: instrumentation, search-state deltas, budgets, macro library | OOM becomes a budget error; frontier bytes drop by an order of magnitude; outputs byte-identical | Planned (`docs/memory_refactor_plan.md`) |
 
 ## 14. Benchmarks and metrics
 

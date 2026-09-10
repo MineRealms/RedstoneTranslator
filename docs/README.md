@@ -7,9 +7,10 @@ not add new contracts to historical files.
 ## Reading order
 
 1. `roadmap.md` — living plan and status log (read first).
-2. `project_status.md` — current capability inventory and the blocking problem.
+2. `project_status.md` — pre-refactor snapshot plus CAD refactor progress.
 3. `architecture.md` — CAD-style P&R migration design (branch `cad-refactor`).
-4. The contracts and designs below for the existing pipeline.
+4. `memory_refactor_plan.md` — M0.5 memory refactor plan and execution tracker.
+5. The contracts and designs below for the existing pipeline.
 
 ## Current
 

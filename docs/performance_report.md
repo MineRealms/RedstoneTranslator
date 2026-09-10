@@ -1,6 +1,8 @@
 # Memory and Compile-Performance Architecture
 
-Status snapshot for external review. Branch `cad-refactor` at commit `1a15e09`.
+Status snapshot for external review. Branch `cad-refactor` at commit `f99f204`
+(M0.5 plan added). See `memory_refactor_plan.md` for the agreed refactor order
+and execution tracker.
 Test baseline: 359 passed / 0 failed (release, `-j1`, single thread, eight heavy
 `test_generate_component_*` tests skipped). Host: Windows, 32 GB RAM, 24 logical
 cores. This document describes the current implementation only; proposed
@@ -120,7 +122,10 @@ The OOM is a hard abort, not a graceful error.
 7. The initial box is large (the compression ladder starts at 64x64x16).
 8. Blocks are unpacked and the nested `Vec` layout fragments allocations.
 
-## 6. Optimization directions not yet implemented
+## 6. Optimization directions
+
+The agreed order and per-commit acceptance criteria live in
+`memory_refactor_plan.md` (M0.5). Summary of the directions:
 
 - A. Tight initial box plus adaptive search budgets (flow level, small change).
 - B. `World3D` copy-on-write or chunked storage (`Arc<Chunk>`): `clone()` becomes O(chunks), writes copy one chunk.

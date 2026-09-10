@@ -171,12 +171,16 @@ required.
 
 ## Known limits of this slice
 
-- Constants are materialized but not folded; a future simplification pass
-  should remove identity operations such as `and(x, 1)`.
+- Constants are materialized as redstone blocks during lowering and folded
+  before placement in `prepare_place`
+  (`src/transform/logic/fold_constants.rs`), which removes identity/absorbing
+  operations and constant-fed Or patterns.
 - Constant sources are physical redstone blocks; `world_to_logic` extraction
   does not map them back to constant nodes yet, so verifier round-trips on
   constant designs are not available.
-- Hierarchy still uses the legacy path; child modules must be scalar.
+- Nested hierarchy is flattened before lowering
+  (`LogicalDesign::flatten_hierarchy`); the PnR flow then accepts one level of
+  scalar leaf children.
 - Partitioning keeps every leaf under the local placer node limit, but chunk
   boundaries are chosen greedily from topology; placement feedback is not yet
   fed back into the partition.
@@ -184,7 +188,8 @@ required.
   once and shared.
 - `LoweringMap` provenance (many-to-many logical-to-routable mapping) is still
   represented by `IrDebugInfo` only.
-- `MappingPolicy` is not yet embedded in RCIR or snapshots.
+- `MappingPolicy` is embedded via `MappingSpec` (`ir/mapping.json` in
+  snapshots and the RCIR mapping profile).
 
 ## Tests
 
