@@ -180,6 +180,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M2.3 | `RouteValidator` interface with a simulator-backed implementation; validation moved into `route_engine/validation.rs` | 324 non-heavy tests |
 | CAD-M3.0 | Placement IR gains pin facings and structured legality (overlap, bounds) plus bounding-box queries | 328 non-heavy tests |
 | CAD-M3.1 | Deterministic initial placement: connectivity-ordered shelf seed, barycenter relaxation, overlap repair | 332 non-heavy tests |
+| CAD-M3.2 | Simulated annealing: deterministic RNG, translate/swap/spread moves, Metropolis cooling, weighted cost model | 336 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are
