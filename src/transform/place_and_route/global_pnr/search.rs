@@ -206,6 +206,7 @@ mod tests {
             cost: LayoutCandidateCost {
                 block_count,
                 bbox_volume: volume,
+                ..Default::default()
             },
         }
     }

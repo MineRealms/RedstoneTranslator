@@ -400,6 +400,11 @@ impl SnapshotProduct for GlobalPnrResult {
                     "cost": {
                         "blocks": candidate.cost.block_count,
                         "bbox_volume": candidate.cost.bbox_volume,
+                        "bbox_footprint": candidate.cost.bbox_footprint,
+                        "height": candidate.cost.height,
+                        "ports": candidate.cost.port_count,
+                        "access_points": candidate.cost.access_point_count,
+                        "blocked_cells": candidate.cost.blocked_cell_count,
                     },
                     "ports": ports,
                 }),
@@ -1669,7 +1674,11 @@ fn routable_candidate_shape_fingerprint(
     config: &UnitCandidateConfig,
 ) -> String {
     debug_parity_hash(&(
-        "routable-local-candidate-cache-v1",
+        "routable-local-candidate-cache-v2",
+        // A candidate is only reusable when the compiler, the target, and the
+        // candidate policy that produced it are identical.
+        env!("CARGO_PKG_VERSION"),
+        crate::ir::ROUTABLE_IR_TARGET,
         &module.ports,
         &module.body,
         config,
@@ -1850,6 +1859,34 @@ mod tests {
             .module(name)
             .cloned()
             .with_context(|| format!("missing test D latch module `{name}`"))
+    }
+
+    #[test]
+    fn candidate_cache_fingerprint_depends_on_shape_and_config() {
+        let module = RoutableModule {
+            name: "leaf".to_owned(),
+            ports: vec![crate::ir::RoutablePort {
+                name: "a".to_owned(),
+                direction: crate::ir::RoutablePortDirection::Input,
+            }],
+            body: crate::ir::RoutableModuleBody::Leaf { nodes: Vec::new() },
+        };
+        let config = UnitCandidateConfig::default();
+        let key = routable_candidate_shape_fingerprint(&module, &config);
+        assert_eq!(key, routable_candidate_shape_fingerprint(&module, &config));
+
+        let mut renamed = module.clone();
+        renamed.ports[0].name = "b".to_owned();
+        assert_ne!(key, routable_candidate_shape_fingerprint(&renamed, &config));
+
+        let different_config = UnitCandidateConfig {
+            max_candidates: config.max_candidates + 1,
+            ..config.clone()
+        };
+        assert_ne!(
+            key,
+            routable_candidate_shape_fingerprint(&module, &different_config)
+        );
     }
 
     #[test]

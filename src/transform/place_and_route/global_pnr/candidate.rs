@@ -10,7 +10,7 @@ use crate::ir::{graph_from_routable_leaf, RoutableModule, RoutablePortDirection}
 use crate::output::{OutputEndpoint, PlacedWorld};
 use crate::transform::place_and_route::detailed_router;
 use crate::transform::place_and_route::global_pnr::ir::{
-    LayoutCandidate, PhysicalPort, PhysicalPortDirection, PortConnection,
+    pareto_frontier, LayoutCandidate, PhysicalPort, PhysicalPortDirection, PortConnection,
 };
 use crate::transform::place_and_route::local_placer::{
     LocalPlacer, LocalPlacerConfig, LocalPlacerInputConstraints,
@@ -189,9 +189,13 @@ fn generate_unit_candidates(
         .iter()
         .any(|node| matches!(node.kind, GraphNodeKind::Sequential(_)));
     let validate_truth_table = !contains_sequential;
+    // Collect a bounded pool so the Pareto frontier can drop dominated
+    // candidates instead of truncating generation order. The multiplier keeps
+    // the extra truth-table validation work small.
+    let pool_limit = config.max_candidates.saturating_mul(4).clamp(1, 64);
     let mut candidates = Vec::new();
     for placed in placed {
-        if candidates.len() >= config.max_candidates {
+        if candidates.len() >= pool_limit {
             break;
         }
         if validate_truth_table && !candidate_matches_truth_table(&graph, &placed)? {
@@ -214,7 +218,7 @@ fn generate_unit_candidates(
             physical_ports,
         )?);
     }
-    Ok(candidates)
+    Ok(pareto_frontier(candidates, config.max_candidates))
 }
 
 fn candidate_ports_cover_module_ports(expected: &[CandidatePort], actual: &[PhysicalPort]) -> bool {
@@ -671,5 +675,81 @@ mod tests {
 
         assert_eq!(port, input_redstone);
         assert!(world[switch].kind.is_air());
+    }
+
+    #[test]
+    fn generated_candidates_form_a_pareto_frontier() -> eyre::Result<()> {
+        use crate::ir::{
+            RoutableModuleBody, RoutableNode, RoutableNodeKind, RoutablePort, RoutablePortDirection,
+        };
+
+        let module = crate::ir::RoutableModule {
+            name: "inv".to_owned(),
+            ports: vec![
+                RoutablePort {
+                    name: "a".to_owned(),
+                    direction: RoutablePortDirection::Input,
+                },
+                RoutablePort {
+                    name: "y".to_owned(),
+                    direction: RoutablePortDirection::Output,
+                },
+            ],
+            body: RoutableModuleBody::Leaf {
+                nodes: vec![
+                    RoutableNode {
+                        id: 0,
+                        kind: RoutableNodeKind::Input {
+                            name: "a".to_owned(),
+                        },
+                        inputs: Vec::new(),
+                        tag: String::new(),
+                    },
+                    RoutableNode {
+                        id: 1,
+                        kind: RoutableNodeKind::Not,
+                        inputs: vec![0],
+                        tag: String::new(),
+                    },
+                    RoutableNode {
+                        id: 2,
+                        kind: RoutableNodeKind::Output {
+                            name: "y".to_owned(),
+                        },
+                        inputs: vec![1],
+                        tag: String::new(),
+                    },
+                ],
+            },
+        };
+        let config = UnitCandidateConfig {
+            dim: DimSize(6, 6, 3),
+            max_candidates: 4,
+            local_config: LocalPlacerConfig {
+                materialize_outputs: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let candidates =
+            generate_routable_module_candidates_with_progress_label(&module, &config, None)?;
+
+        assert!(
+            !candidates.is_empty(),
+            "inverter leaf must produce at least one candidate"
+        );
+        for (left_index, left) in candidates.iter().enumerate() {
+            for (right_index, right) in candidates.iter().enumerate() {
+                if left_index == right_index {
+                    continue;
+                }
+                assert!(
+                    !super::super::ir::dominates(&left.cost, &right.cost),
+                    "candidate {left_index} dominates candidate {right_index}"
+                );
+            }
+        }
+        Ok(())
     }
 }

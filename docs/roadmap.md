@@ -68,20 +68,27 @@ extend the frontend, then build the demos.
       registers, PnR topology integration.
 - [x] `docs/technology_mapping_design.md`.
 
-### Step 2 - Cell library, physical contracts, Pareto candidates (NEXT)
+### Step 2 - Cell library, physical contracts, Pareto candidates (IN PROGRESS)
 
 Goal: move the local placer from "search on every compile" toward "select from
 a reusable library of verified physical candidates".
 
+- [x] Extend `LayoutCandidate` metrics from `block_count + bbox_volume` to a
+      metric vector (footprint, height, port count, access points, blocked
+      cells) with a minimization-objective view.
+- [x] Retain a bounded Pareto frontier in candidate generation
+      (`pareto_frontier`, dominance on block count / volume / footprint /
+      height) instead of truncating generation order.
+- [x] Harden the persistent cache identity: compiler version, target name,
+      module shape, and candidate policy are all part of the fingerprint.
+- [x] Tests: dominance rules, frontier trade-offs, frontier limit, generated
+      candidates contain no dominated pair, fingerprint sensitivity.
 - [ ] Define a stable cell/recipe model (`*.rcell`-like) separate from
       per-design floorplan intent (see `physical_design_intent.md`).
-- [ ] Extend `LayoutCandidate` metrics from `block_count + bbox_volume` to a
-      metric vector (footprint, height, port access, blockage, delay).
-- [ ] Retain a bounded Pareto frontier instead of a single best candidate.
-- [ ] Add physical-contract fields: access points, halo, legal transforms.
-- [ ] Cache verified candidates by target + implementation + recipe + compiler
-      version; wire the cache into `UnitCandidateConfig`.
-- [ ] Tests: dominance/Pareto filtering, cache identity, candidate reuse.
+- [ ] Add physical-contract fields: halo, required isolation, legal
+      transforms, delay vector.
+- [ ] Cache verified candidates by target + implementation + recipe (the
+      current key covers shape and policy, not a named recipe yet).
 
 ### Step 3 - Routable IR expressiveness
 
@@ -124,6 +131,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | Step 1.6 | Constants end to end (redstone block / inverter expansion) | 278 non-heavy tests |
 | Step 4a | FSM frontend: else/case/multi-statement/negedge, `Eq` operator | 283 non-heavy tests |
 | Step 4b | `==`/`!=`, ANSI headers, bit selects | 288 non-heavy tests |
+| Step 2a | Candidate metric vector, Pareto frontier, cache identity hardening | 293 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are
