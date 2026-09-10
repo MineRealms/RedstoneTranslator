@@ -18,6 +18,7 @@ not add new contracts to historical files.
 | `roadmap.md` | Living roadmap, milestone order, status log, working agreements |
 | `project_status.md` | Done / not done / precise blocker; hand-off snapshot |
 | `performance_report.md` | Memory and compile-performance architecture snapshot for external review |
+| `memory_refactor_plan.md` | M0.5 memory refactor summary and execution tracker (search-state deltas, budgets, macro library) |
 | `architecture.md` | CAD migration design: macro library, placement, routing engine, PathFinder, compression |
 | `intermediate_representation_design.md` | RCIR language contract (Logical/Routable IR, lowering, provenance) |
 | `verilog_rtl_interface_design.md` | Verilog frontend pipeline and extension rules |

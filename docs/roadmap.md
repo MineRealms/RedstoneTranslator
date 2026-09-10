@@ -192,6 +192,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M5.0 | Compression ladder: descending box iteration, acceptance bookkeeping, generated box-intent integration with the PnR flow | 359 non-heavy tests |
 | CAD-M5.1 | CLI `--compress` wiring for Verilog, Logical RCIR, and Routable RCIR inputs (composite tops; replaces `--intent`) | 359 non-heavy tests |
 | CAD-perf-report | `docs/performance_report.md`: memory/compile-performance architecture snapshot for external review | - |
+| CAD-M0.5 | Memory architecture refactor plan and execution tracker (`docs/memory_refactor_plan.md`); not started | planned |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are
