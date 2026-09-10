@@ -14,8 +14,8 @@ use super::mapping::{
 };
 use super::target::{MappingPolicy, TargetSpec};
 use super::{
-    Endpoint, NetClass, RoutableDesign, RoutableModule, RoutableNet, RoutablePortDirection,
-    ROUTABLE_IR_TARGET,
+    Endpoint, NetClass, RoutableDesign, RoutableModule, RoutableModuleBody, RoutableNet,
+    RoutablePortDirection, ROUTABLE_IR_TARGET,
 };
 use crate::graph::logic::LogicGraph;
 use crate::graph::{Graph, GraphNode, GraphNodeKind};
@@ -322,7 +322,10 @@ fn lower_logical_design(
             return lower_flat_module(top, target, policy);
         }
         return match graph_backed_module(top, &top.name) {
-            Ok(module) => finish_design(&top.name, target.name(), vec![module]),
+            Ok(module) if !leaf_exceeds_place_limit(&module)? => {
+                finish_design(&top.name, target.name(), vec![module])
+            }
+            Ok(_) => lower_flat_module(top, target, policy),
             Err(scalar_error) => lower_flat_module(top, target, policy).wrap_err_with(|| {
                 format!("legacy scalar leaf lowering failed first: {scalar_error}")
             }),
@@ -367,6 +370,19 @@ fn lower_logical_design(
     }
     modules.push(hierarchical_module(top, &definitions)?);
     finish_design(&top.name, target.name(), modules)
+}
+
+/// The legacy scalar leaf writer does not partition its graph. A leaf whose
+/// prepared graph would exceed the local placer limit must use the general
+/// mapper, which partitions the cone into placeable leaves.
+fn leaf_exceeds_place_limit(module: &RoutableModule) -> eyre::Result<bool> {
+    if !matches!(module.body, RoutableModuleBody::Leaf { .. }) {
+        return Ok(false);
+    }
+    let graph = super::graph_from_routable_leaf(module)?;
+    let prepared = LogicGraph { graph }.prepare_place()?;
+    Ok(prepared.nodes.len()
+        > crate::transform::place_and_route::local_placer::K_MAX_LOCAL_PLACE_NODE_COUNT)
 }
 
 fn lower_state_design(module: &LogicalModule) -> eyre::Result<Option<RoutableDesign>> {

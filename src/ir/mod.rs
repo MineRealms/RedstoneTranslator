@@ -1,4 +1,6 @@
 pub mod debug;
+#[cfg(test)]
+mod benchmarks;
 mod flatten;
 mod leaf_graph;
 pub(crate) use leaf_graph::graph_from_routable_leaf;
