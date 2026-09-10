@@ -435,8 +435,9 @@ Implemented in `place_and_route::compression`: `compress` owns the descending
 iteration and acceptance bookkeeping, and
 `place_and_route_with_compression` runs the full PnR flow once per box,
 constraining every top-level instance inside the box through a generated
-physical intent (`Inside` constraints over one region). CLI wiring and
-benchmark evidence are the remaining M5 work.
+physical intent (`Inside` constraints over one region). The CLI exposes it as
+`--compress` (composite tops only; replaces `--intent`). Benchmark evidence is
+the remaining M5 work.
 
 ## 12. Compatibility and migration strategy
 

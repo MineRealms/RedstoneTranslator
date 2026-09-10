@@ -4,6 +4,10 @@ use eyre::WrapErr;
 use mimalloc::MiMalloc;
 use redstone_compiler::ir::{LogicalDesign, MappingSpec, RcirDocument};
 use redstone_compiler::snapshot::{compile_with_snapshot, SnapshotOptions};
+use redstone_compiler::transform::place_and_route::compression::{
+    default_ladder, place_and_route_logical_design_with_compression,
+    place_and_route_with_compression,
+};
 use redstone_compiler::transform::place_and_route::global_pnr::cell_library::CellLibrary;
 use redstone_compiler::transform::place_and_route::global_pnr::topology::ResolvedPnrTopology;
 use redstone_compiler::transform::place_and_route::global_pnr::{
@@ -42,6 +46,10 @@ pub struct CompilerOption {
     /// Lowering configuration (JSON): target name and mapping policy.
     #[structopt(long, parse(from_os_str))]
     pub mapping_policy: Option<PathBuf>,
+
+    /// Shrink the design with the compression ladder (replaces `--intent`).
+    #[structopt(long)]
+    pub compress: bool,
 }
 
 fn load_mapping_spec(path: &std::path::Path) -> eyre::Result<MappingSpec> {
@@ -163,6 +171,11 @@ fn compile_verilog_input(opt: CompilerOption) -> eyre::Result<()> {
     };
 
     let (snapshot_dir, snapshot_archive, options) = snapshot_options(&opt.input, &output);
+    if opt.compress && opt.intent.is_some() {
+        eyre::bail!(
+            "--compress replaces the physical intent; pass only one of --compress and --intent"
+        );
+    }
     let routable =
         logical.lower_to_routable_with_target(&mapping.target_spec()?, &mapping.policy)?;
     let topology = ResolvedPnrTopology::from_routable(&routable)?;
@@ -173,7 +186,22 @@ fn compile_verilog_input(opt: CompilerOption) -> eyre::Result<()> {
     apply_cell_library(&mut config, cell_library);
     compile_with_snapshot(options, || {
         emit_intent_source(intent_source.as_ref())?;
-        place_and_route_logical_design_with_mapping(&logical, &mapping, &config)
+        if opt.compress {
+            let compressed = place_and_route_logical_design_with_compression(
+                &logical,
+                &mapping,
+                &default_ladder(),
+                &config,
+            )?;
+            println!(
+                "compression: selected box {:?} after {} attempt(s)",
+                compressed.box_size,
+                compressed.attempts.len()
+            );
+            Ok(compressed.value)
+        } else {
+            place_and_route_logical_design_with_mapping(&logical, &mapping, &config)
+        }
     })?;
 
     println!("exported Verilog snapshot: path={}", snapshot_dir.display());
@@ -217,6 +245,11 @@ fn compile_rcir_input(opt: CompilerOption) -> eyre::Result<()> {
     };
 
     let (snapshot_dir, snapshot_archive, options) = snapshot_options(&opt.input, &output);
+    if opt.compress && opt.intent.is_some() {
+        eyre::bail!(
+            "--compress replaces the physical intent; pass only one of --compress and --intent"
+        );
+    }
     let routable = match &ir {
         RcirDocument::Logical(design) => {
             design.lower_to_routable_with_target(&mapping.target_spec()?, &mapping.policy)?
@@ -238,11 +271,37 @@ fn compile_rcir_input(opt: CompilerOption) -> eyre::Result<()> {
     match &ir {
         RcirDocument::Logical(design) => compile_with_snapshot(options, || {
             emit_intent_source(intent_source.as_ref())?;
-            place_and_route_logical_design_with_mapping(design, &mapping, &config)
+            if opt.compress {
+                let compressed = place_and_route_logical_design_with_compression(
+                    design,
+                    &mapping,
+                    &default_ladder(),
+                    &config,
+                )?;
+                println!(
+                    "compression: selected box {:?} after {} attempt(s)",
+                    compressed.box_size,
+                    compressed.attempts.len()
+                );
+                Ok(compressed.value)
+            } else {
+                place_and_route_logical_design_with_mapping(design, &mapping, &config)
+            }
         })?,
         RcirDocument::Routable(document) => compile_with_snapshot(options, || {
             emit_intent_source(intent_source.as_ref())?;
-            place_and_route_routable_design_with_visualization(&document.design, &config)
+            if opt.compress {
+                let compressed =
+                    place_and_route_with_compression(&document.design, &default_ladder(), &config)?;
+                println!(
+                    "compression: selected box {:?} after {} attempt(s)",
+                    compressed.box_size,
+                    compressed.attempts.len()
+                );
+                Ok(compressed.value)
+            } else {
+                place_and_route_routable_design_with_visualization(&document.design, &config)
+            }
         })?,
     };
 

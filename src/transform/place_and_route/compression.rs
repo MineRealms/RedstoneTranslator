@@ -7,13 +7,14 @@
 
 use std::collections::BTreeMap;
 
-use crate::ir::{RoutableDesign, RoutableInstance, RoutableModuleBody};
+use crate::ir::{LogicalDesign, MappingSpec, RoutableDesign, RoutableInstance, RoutableModuleBody};
 use crate::transform::place_and_route::global_pnr::physical_intent::{
     IntentRegion, PhysicalConstraint, PhysicalIntent, PHYSICAL_INTENT_FORMAT,
 };
 use crate::transform::place_and_route::global_pnr::topology::ResolvedPnrTopology;
 use crate::transform::place_and_route::global_pnr::{
-    place_and_route_routable_design_with_visualization, GlobalPnrConfig, GlobalPnrResult,
+    place_and_route_routable_design_with_visualization, routable_document_from_config,
+    GlobalPnrConfig, GlobalPnrResult,
 };
 use crate::world::position::DimSize;
 
@@ -155,6 +156,31 @@ pub fn place_and_route_with_compression(
         attempt_config.physical_intent = Some(resolved);
         place_and_route_routable_design_with_visualization(design, &attempt_config)
     })
+}
+
+/// Lowers a logical design with an explicit mapping spec, emits the logical
+/// snapshot artifacts, and runs the compression ladder.
+pub fn place_and_route_logical_design_with_compression(
+    design: &LogicalDesign,
+    mapping: &MappingSpec,
+    ladder: &[DimSize],
+    config: &GlobalPnrConfig,
+) -> eyre::Result<CompressionResult<GlobalPnrResult>> {
+    design.validate()?;
+    let target = mapping.target_spec()?;
+    mapping.policy.validate(&target)?;
+    let routable = design.lower_to_routable_with_target(&target, &mapping.policy)?;
+    if crate::snapshot::is_active() {
+        let logical_text = design.to_string();
+        let routable_text = routable_document_from_config(&routable, config)?.to_string();
+        let source_map =
+            crate::ir::debug::build_source_map(design, &logical_text, &routable, &routable_text);
+        crate::snapshot::emit_text("ir/logical.rcir", logical_text)?;
+        crate::snapshot::emit_json("ir/logical.json", design)?;
+        crate::snapshot::emit_json("ir/mapping.json", mapping)?;
+        crate::snapshot::emit_json("ir/source-map.json", &source_map)?;
+    }
+    place_and_route_with_compression(&routable, ladder, config)
 }
 
 #[cfg(test)]
