@@ -183,6 +183,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M3.2 | Simulated annealing: deterministic RNG, translate/swap/spread moves, Metropolis cooling, weighted cost model | 336 non-heavy tests |
 | CAD-M3.3 | Placement benchmark harness over the M0 set with structural macros; all composite benchmarks place legally (fsm_2bit wire 142→115) | 337 non-heavy tests |
 | CAD-M3.4 | Real-flow adapter behind `PlacementEngine::{Legacy, Annealed}`; selected candidates convert to macros and back to `PlacedModule`s | 338 non-heavy tests |
+| CAD-M3.5 | Engine comparison harness (`MCHDL_BENCH` per-process, bounded config); `not_chain` Legacy 516 ms / Annealed 498 ms; composite full-flow runs deferred (32 GB host OOMs) | 338 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

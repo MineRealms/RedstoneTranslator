@@ -22,3 +22,14 @@ On memory-constrained machines (e.g. 32 GB), the eight search-heavy `test_genera
 cargo test --release -- --test-threads=1
 cargo test --release -- --skip test_generate_component --test-threads=1
 ```
+
+## Build memory
+
+This crate's rustc and linker peak well above 4 GB per job. On a 32 GB machine use at most `-j 2` and prefer `-j 1` for release builds; never run several cargo commands at once.
+
+```text
+cargo check --lib -j 1
+cargo test --release --lib -j 2 -- --skip test_generate_component --test-threads=1
+```
+
+Full-flow PnR benchmark tests (`benchmark_pnr_baseline`, `benchmark_placement_engines_baseline`) are manual and can exhaust 32 GB. Run one benchmark per process with `MCHDL_BENCH=<name>` and only on a larger machine.

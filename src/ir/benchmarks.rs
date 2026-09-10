@@ -421,3 +421,103 @@ fn benchmark_placement_baseline() -> eyre::Result<()> {
     )?;
     Ok(())
 }
+
+#[test]
+#[ignore = "full PnR engine comparison; run manually with --release"]
+fn benchmark_placement_engines_baseline() -> eyre::Result<()> {
+    use crate::transform::place_and_route::global_pnr::candidate::UnitCandidateConfig;
+    use crate::transform::place_and_route::global_pnr::placer::{
+        GlobalPlacementConfig, PlacementEngine,
+    };
+    use crate::transform::place_and_route::global_pnr::policy::{
+        GlobalPnrPolicies, GlobalSearchBudget, PlacementHeuristic,
+    };
+    use crate::transform::place_and_route::global_pnr::router::{
+        GlobalRoutingConfig, GlobalRoutingStrategy, NetOrderStrategy, RouteValidationMode,
+    };
+    use crate::transform::place_and_route::global_pnr::{
+        place_and_route_logical_design, GlobalPnrConfig, GlobalSearchConfig,
+    };
+
+    let filter = std::env::var("MCHDL_BENCH").ok();
+    let mut results = Vec::new();
+    for (name, source) in BENCHMARKS {
+        if filter
+            .as_deref()
+            .is_some_and(|filter| filter != *name)
+        {
+            continue;
+        }
+        let logical = LogicalDesign::from_verilog_source_named(source, &format!("{name}.v"))?;
+        for engine in [PlacementEngine::Legacy, PlacementEngine::Annealed] {
+            let routing = GlobalRoutingConfig {
+                strategy: GlobalRoutingStrategy::DirectGreedy { max_steps: 64 },
+                validation: RouteValidationMode::Deferred,
+            };
+            let config = GlobalPnrConfig {
+                show_progress: false,
+                candidate: UnitCandidateConfig {
+                    max_candidates: 1,
+                    ..Default::default()
+                }
+                .into(),
+                placement: GlobalPlacementConfig {
+                    engine,
+                    spacing: 2,
+                    max_attempts: 1,
+                    ..Default::default()
+                },
+                routing_probe: Some(routing),
+                routing,
+                search: GlobalSearchConfig {
+                    budget: GlobalSearchBudget {
+                        max_candidates_per_child: 1,
+                        max_layout_combinations: 1,
+                        max_detailed_routing_attempts: 1,
+                        max_refined_routing_attempts: 1,
+                        max_refinement_rounds: 1,
+                    },
+                    policies: GlobalPnrPolicies {
+                        placement_heuristics: vec![PlacementHeuristic::Shelf],
+                        net_order_strategies: vec![NetOrderStrategy::Criticality],
+                    },
+                },
+                ..Default::default()
+            };
+            let started = std::time::Instant::now();
+            let outcome = std::panic::catch_unwind(|| {
+                place_and_route_logical_design(&logical, &config)
+            });
+            let elapsed_ms = started.elapsed().as_millis();
+            let (ok, blocks, error) = match outcome {
+                Ok(Ok(world)) => (true, world.iter_block().len(), None),
+                Ok(Err(error)) => (false, 0, Some(error.to_string())),
+                Err(_) => (false, 0, Some("panicked".to_owned())),
+            };
+            println!(
+                "{name:<14} engine={engine:?} ok={ok} blocks={blocks} elapsed_ms={elapsed_ms} error={}",
+                error.as_deref().unwrap_or("-")
+            );
+            results.push(serde_json::json!({
+                "name": name,
+                "engine": format!("{engine:?}"),
+                "ok": ok,
+                "blocks": blocks,
+                "elapsed_ms": elapsed_ms,
+                "error": error,
+            }));
+        }
+    }
+
+    let baseline = serde_json::json!({
+        "format": "redstone-compiler.benchmark-placement-engines.v1",
+        "results": results,
+    });
+    std::fs::create_dir_all("target")?;
+    let path = match filter {
+        Some(name) => format!("target/benchmark-placement-engines-{name}.json"),
+        None => "target/benchmark-placement-engines.json".to_owned(),
+    };
+    std::fs::write(path, serde_json::to_vec_pretty(&baseline)?)?;
+    Ok(())
+}
