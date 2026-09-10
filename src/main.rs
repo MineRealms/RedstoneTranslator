@@ -2,13 +2,13 @@ use std::path::PathBuf;
 
 use eyre::WrapErr;
 use mimalloc::MiMalloc;
-use redstone_compiler::ir::{LogicalDesign, RcirDocument};
+use redstone_compiler::ir::{LogicalDesign, MappingSpec, RcirDocument};
 use redstone_compiler::snapshot::{compile_with_snapshot, SnapshotOptions};
 use redstone_compiler::transform::place_and_route::global_pnr::cell_library::CellLibrary;
 use redstone_compiler::transform::place_and_route::global_pnr::topology::ResolvedPnrTopology;
 use redstone_compiler::transform::place_and_route::global_pnr::{
     apply_routable_document, emit_prepared_pnr_snapshot, load_prepared_pnr_snapshot,
-    place_and_route_logical_design_with_visualization,
+    place_and_route_logical_design_with_mapping,
     place_and_route_routable_design_with_visualization, run_prepared_pnr_with_visualization,
     GlobalPnrConfig, PhysicalIntent, PnrPrepareConfig,
 };
@@ -38,6 +38,16 @@ pub struct CompilerOption {
     /// Replay restores the library embedded in the snapshot instead.
     #[structopt(long, parse(from_os_str))]
     pub cell_library: Option<PathBuf>,
+
+    /// Lowering configuration (JSON): target name and mapping policy.
+    #[structopt(long, parse(from_os_str))]
+    pub mapping_policy: Option<PathBuf>,
+}
+
+fn load_mapping_spec(path: &std::path::Path) -> eyre::Result<MappingSpec> {
+    let source = std::fs::read_to_string(path)?;
+    MappingSpec::from_json(&source)
+        .wrap_err_with(|| format!("load mapping spec {}", path.display()))
 }
 
 fn load_cell_library(path: &std::path::Path) -> eyre::Result<CellLibrary> {
@@ -125,6 +135,12 @@ fn compile_verilog_input(opt: CompilerOption) -> eyre::Result<()> {
         .as_deref()
         .map(load_cell_library)
         .transpose()?;
+    let mapping = opt
+        .mapping_policy
+        .as_deref()
+        .map(load_mapping_spec)
+        .transpose()?
+        .unwrap_or_default();
     let Some(output) = opt.output else {
         let cells = logical
             .modules
@@ -147,7 +163,8 @@ fn compile_verilog_input(opt: CompilerOption) -> eyre::Result<()> {
     };
 
     let (snapshot_dir, snapshot_archive, options) = snapshot_options(&opt.input, &output);
-    let routable = logical.lower_to_routable()?;
+    let routable =
+        logical.lower_to_routable_with_target(&mapping.target_spec()?, &mapping.policy)?;
     let topology = ResolvedPnrTopology::from_routable(&routable)?;
     let (physical_intent, intent_source) = bind_physical_intent(opt.intent.as_deref(), &topology)?;
     let mut config = GlobalPnrConfig::default();
@@ -156,7 +173,7 @@ fn compile_verilog_input(opt: CompilerOption) -> eyre::Result<()> {
     apply_cell_library(&mut config, cell_library);
     compile_with_snapshot(options, || {
         emit_intent_source(intent_source.as_ref())?;
-        place_and_route_logical_design_with_visualization(&logical, &config)
+        place_and_route_logical_design_with_mapping(&logical, &mapping, &config)
     })?;
 
     println!("exported Verilog snapshot: path={}", snapshot_dir.display());
@@ -176,6 +193,12 @@ fn compile_rcir_input(opt: CompilerOption) -> eyre::Result<()> {
         .as_deref()
         .map(load_cell_library)
         .transpose()?;
+    let mapping = opt
+        .mapping_policy
+        .as_deref()
+        .map(load_mapping_spec)
+        .transpose()?
+        .unwrap_or_default();
     let Some(output) = opt.output else {
         match &ir {
             RcirDocument::Logical(design) => println!(
@@ -195,7 +218,9 @@ fn compile_rcir_input(opt: CompilerOption) -> eyre::Result<()> {
 
     let (snapshot_dir, snapshot_archive, options) = snapshot_options(&opt.input, &output);
     let routable = match &ir {
-        RcirDocument::Logical(design) => design.lower_to_routable()?,
+        RcirDocument::Logical(design) => {
+            design.lower_to_routable_with_target(&mapping.target_spec()?, &mapping.policy)?
+        }
         RcirDocument::Routable(document) => document.design.clone(),
     };
     let topology = ResolvedPnrTopology::from_routable(&routable)?;
@@ -213,7 +238,7 @@ fn compile_rcir_input(opt: CompilerOption) -> eyre::Result<()> {
     match &ir {
         RcirDocument::Logical(design) => compile_with_snapshot(options, || {
             emit_intent_source(intent_source.as_ref())?;
-            place_and_route_logical_design_with_visualization(design, &config)
+            place_and_route_logical_design_with_mapping(design, &mapping, &config)
         })?,
         RcirDocument::Routable(document) => compile_with_snapshot(options, || {
             emit_intent_source(intent_source.as_ref())?;

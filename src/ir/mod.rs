@@ -35,7 +35,8 @@ pub use routable::{
     RoutableSequentialPrimitive, ROUTABLE_IR_TARGET, ROUTABLE_IR_VERSION,
 };
 pub use target::{
-    AdderMapping, MappingPolicy, MuxMapping, RegisterMapping, TargetOp, TargetSpec, XorMapping,
+    AdderMapping, MappingPolicy, MappingSpec, MuxMapping, RegisterMapping, TargetOp, TargetSpec,
+    XorMapping, MAPPING_SPEC_FORMAT,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]

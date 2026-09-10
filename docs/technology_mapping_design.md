@@ -142,6 +142,15 @@ This unblocks `q <= 0`/`q <= 1`, constant mux branches, masks, and constant
 module outputs. Constant folding/simplification (for example `and(x, 1) -> x`)
 is not implemented yet; constants are materialized rather than optimized away.
 
+## Persistence
+
+`MappingSpec` (`redstone-compiler.mapping.v1`) is a versioned JSON document
+holding the target name and the mapping policy. It can be supplied with
+`--mapping-policy path.json` for `.v` and logical `.rcir` inputs, and
+`place_and_route_logical_design_with_mapping` records it in the snapshot as
+`ir/mapping.json`, so the lowering configuration that produced a design is
+recoverable. The default spec is `redstone-v1` with the default policy.
+
 ## Compatibility and migration
 
 Dispatch in `lower_logical_design`:

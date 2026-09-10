@@ -1121,6 +1121,35 @@ module m {
     }
 
     #[test]
+    fn mapping_spec_json_drives_lowering() {
+        let spec = crate::ir::MappingSpec::from_json(
+            r#"{"format":"redstone-compiler.mapping.v1","target":"redstone-v1","policy":{"register":"master_slave_latches","adder":"ripple_carry","mux":"and_or_not","xor":"and_or_not"}}"#,
+        )
+        .expect("mapping spec");
+        let logical = crate::ir::LogicalDesign::from_verilog_source(
+            r#"
+            module m(a, b, y);
+              input [1:0] a, b;
+              output [1:0] y;
+              assign y = a ^ b;
+            endmodule
+            "#,
+        )
+        .expect("test source must parse");
+
+        let design = logical
+            .lower_to_routable_with_target(&spec.target_spec().unwrap(), &spec.policy)
+            .expect("spec-driven lowering must succeed");
+        let leaf = design.module("m").expect("leaf module");
+        let RoutableModuleBody::Leaf { nodes } = &leaf.body else {
+            panic!("xor design must lower to a leaf");
+        };
+        assert!(!nodes
+            .iter()
+            .any(|node| matches!(node.kind, RoutableNodeKind::Xor)));
+    }
+
+    #[test]
     fn wide_combinational_add_is_partitioned_into_a_composite() {
         let design = lower(
             r#"

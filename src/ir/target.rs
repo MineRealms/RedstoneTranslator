@@ -12,7 +12,12 @@
 
 use std::collections::BTreeSet;
 
+use eyre::WrapErr;
+use serde::{Deserialize, Serialize};
+
 use super::routable::ROUTABLE_IR_TARGET;
+
+pub const MAPPING_SPEC_FORMAT: &str = "redstone-compiler.mapping.v1";
 
 /// Primitive operations that a routable target can implement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -99,27 +104,31 @@ impl Default for TargetSpec {
 }
 
 /// How a logical `Dff`/`Register` becomes target-supported state cells.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RegisterMapping {
     /// Two D latches with an inverted clock (master/slave).
     MasterSlaveLatches,
 }
 
 /// How a logical `Add`/`Inc` becomes scalar logic.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AdderMapping {
     RippleCarry,
 }
 
 /// How a logical `Mux` becomes scalar logic.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MuxMapping {
     /// `result = (when_true & select) | (when_false & ~select)`.
     AndOrNot,
 }
 
 /// How a logical `Xor` becomes target primitives.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum XorMapping {
     /// Emit a native xor primitive.
     Direct,
@@ -128,7 +137,7 @@ pub enum XorMapping {
 }
 
 /// Implementation choices used by Logical-to-Routable lowering.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MappingPolicy {
     pub register: RegisterMapping,
     pub adder: AdderMapping,
@@ -176,6 +185,58 @@ impl MappingPolicy {
             }
         }
         Ok(())
+    }
+}
+
+/// A versioned, serializable lowering configuration: target name plus mapping
+/// policy. Emitted to snapshots and accepted from the CLI so a design can be
+/// lowered reproducibly with a chosen set of implementation variants.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MappingSpec {
+    pub format: String,
+    pub target: String,
+    pub policy: MappingPolicy,
+}
+
+impl Default for MappingSpec {
+    fn default() -> Self {
+        Self::redstone_v1()
+    }
+}
+
+impl MappingSpec {
+    pub fn redstone_v1() -> Self {
+        Self {
+            format: MAPPING_SPEC_FORMAT.to_owned(),
+            target: ROUTABLE_IR_TARGET.to_owned(),
+            policy: MappingPolicy::default(),
+        }
+    }
+
+    pub fn from_json(source: &str) -> eyre::Result<Self> {
+        let spec: Self = serde_json::from_str(source).context("parse mapping spec JSON")?;
+        if spec.format != MAPPING_SPEC_FORMAT {
+            eyre::bail!(
+                "unsupported mapping spec format `{}`, expected `{MAPPING_SPEC_FORMAT}`",
+                spec.format
+            );
+        }
+        Ok(spec)
+    }
+
+    pub fn to_json(&self) -> eyre::Result<String> {
+        Ok(serde_json::to_string_pretty(self)?)
+    }
+
+    pub fn target_spec(&self) -> eyre::Result<TargetSpec> {
+        if self.target == ROUTABLE_IR_TARGET {
+            Ok(TargetSpec::redstone_v1())
+        } else {
+            eyre::bail!(
+                "unsupported mapping target `{}`, expected `{ROUTABLE_IR_TARGET}`",
+                self.target
+            )
+        }
     }
 }
 
@@ -233,6 +294,34 @@ mod tests {
         };
 
         assert!(policy.validate(&target).is_ok());
+    }
+
+    #[test]
+    fn mapping_spec_round_trips_and_rejects_unknown_formats() {
+        let spec = MappingSpec {
+            policy: MappingPolicy {
+                xor: XorMapping::AndOrNot,
+                ..MappingPolicy::default()
+            },
+            ..MappingSpec::redstone_v1()
+        };
+
+        let json = spec.to_json().expect("serialize mapping spec");
+        assert_eq!(MappingSpec::from_json(&json).unwrap(), spec);
+        assert!(spec.target_spec().is_ok());
+
+        let error = MappingSpec::from_json(
+            r#"{"format":"other","target":"redstone-v1","policy":{"register":"master_slave_latches","adder":"ripple_carry","mux":"and_or_not","xor":"direct"}}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("unsupported mapping spec format"), "{error}");
+
+        let unknown_target = MappingSpec {
+            target: "other".to_owned(),
+            ..MappingSpec::redstone_v1()
+        };
+        assert!(unknown_target.target_spec().is_err());
     }
 
     #[test]

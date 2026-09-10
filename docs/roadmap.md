@@ -109,7 +109,9 @@ Goal: represent what real designs need before the physical flow.
 - [x] Hierarchy: deterministic flattening for nested hierarchy, mixed
       cells/instances, and vector-port children; the legacy one-level scalar
       structural path is preserved for compatibility.
-- [ ] Embed `MappingPolicy` in RCIR/snapshots for reproducible lowering.
+- [x] Embed `MappingPolicy` in snapshots for reproducible lowering:
+      `MappingSpec` JSON (`redstone-compiler.mapping.v1`), `--mapping-policy`
+      CLI flag, and `ir/mapping.json` snapshot artifact.
 - [ ] Optional: `LoweringMap` provenance object (many-to-many mapping).
 
 ### Step 4 - Frontend breadth / optional Yosys bridge
@@ -147,6 +149,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | Step 2c | Contract consumption: isolation, halo placement, fingerprints | 301 non-heavy tests |
 | Step 2d | Library CLI, snapshot embedding, replay restore, halo in parity hash | 302 non-heavy tests |
 | Step 3a | Deterministic hierarchy flattening (nested, mixed, vector ports) | 306 non-heavy tests |
+| Step 3b | MappingSpec persistence: JSON, CLI flag, snapshot artifact | 308 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

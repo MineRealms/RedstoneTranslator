@@ -644,8 +644,24 @@ pub fn place_and_route_logical_design_with_visualization(
     design: &LogicalDesign,
     config: &GlobalPnrConfig,
 ) -> eyre::Result<GlobalPnrResult> {
+    place_and_route_logical_design_with_mapping(
+        design,
+        &crate::ir::MappingSpec::redstone_v1(),
+        config,
+    )
+}
+
+/// Lowers a logical design with an explicit mapping spec, records the spec in
+/// the snapshot, and runs global PnR.
+pub fn place_and_route_logical_design_with_mapping(
+    design: &LogicalDesign,
+    mapping: &crate::ir::MappingSpec,
+    config: &GlobalPnrConfig,
+) -> eyre::Result<GlobalPnrResult> {
     design.validate()?;
-    let routable = design.lower_to_routable()?;
+    let target = mapping.target_spec()?;
+    mapping.policy.validate(&target)?;
+    let routable = design.lower_to_routable_with_target(&target, &mapping.policy)?;
     if crate::snapshot::is_active() {
         let logical_text = design.to_string();
         let routable_text = routable_document_from_config(&routable, config)?.to_string();
@@ -653,6 +669,7 @@ pub fn place_and_route_logical_design_with_visualization(
             crate::ir::debug::build_source_map(design, &logical_text, &routable, &routable_text);
         crate::snapshot::emit_text("ir/logical.rcir", logical_text)?;
         crate::snapshot::emit_json("ir/logical.json", design)?;
+        crate::snapshot::emit_json("ir/mapping.json", mapping)?;
         crate::snapshot::emit_json("ir/source-map.json", &source_map)?;
     }
     place_and_route_routable_design_with_visualization(&routable, config)
