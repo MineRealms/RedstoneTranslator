@@ -1579,6 +1579,7 @@ fn route_direct_output_to_point(
             world,
             sink,
         )),
+        extra_cost: 0,
     };
     if let Ok((route, routed_world)) = route_point_to_point_from_initial_state(
         world,
@@ -1604,6 +1605,7 @@ fn route_direct_output_to_point(
                 strength: signal_strength,
             }],
             pending_bounds: None,
+            extra_cost: 0,
         };
         let Ok((route, routed_world)) = route_point_to_point_from_initial_state(
             world,

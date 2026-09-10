@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use super::congestion::CongestionMap;
 use super::cost::RouteCostModel;
 use super::goal::RouteGoal;
 use super::queue::{route_expansion_limit, RouteSearchQueue};
@@ -72,6 +73,7 @@ pub(crate) fn route_point_to_point_with_strategy_and_allowed_contacts_and_initia
     initial_strength: usize,
 ) -> Result<(RoutedNet, World3D), RouteFailure> {
     let goal = RouteGoal::for_sink(world, sink);
+    let congestion = CongestionMap::new();
     route_point_to_point_with_bounds_and_initial_strength(
         world,
         source,
@@ -83,6 +85,7 @@ pub(crate) fn route_point_to_point_with_strategy_and_allowed_contacts_and_initia
         &additional_allowed_contacts,
         initial_strength,
         RouteCostModel::default(),
+        &congestion,
     )
     .or_else(|_| {
         route_point_to_point_with_bounds_and_initial_strength(
@@ -96,6 +99,7 @@ pub(crate) fn route_point_to_point_with_strategy_and_allowed_contacts_and_initia
             &additional_allowed_contacts,
             initial_strength,
             RouteCostModel::default(),
+            &congestion,
         )
     })
 }
@@ -251,6 +255,7 @@ pub(crate) fn isolated_output_repeater_initial_states(
                     strength: MAX_REDSTONE_STRENGTH,
                 }],
                 pending_bounds: None,
+                extra_cost: 0,
             });
         }
 
@@ -290,6 +295,7 @@ fn escaped_output_repeater_initial_states(
             strength: initial_signal_strength(world, seed),
         }],
         pending_bounds: None,
+        extra_cost: 0,
     }]);
 
     while let Some(state) = queue.pop_front() {
@@ -312,6 +318,7 @@ fn escaped_output_repeater_initial_states(
                     signal_strength: MAX_REDSTONE_STRENGTH,
                     powered_taps,
                     pending_bounds: None,
+                    extra_cost: 0,
                 });
             }
         }
@@ -364,6 +371,7 @@ fn escaped_output_repeater_initial_states(
                     signal_strength: next_strength,
                     powered_taps,
                     pending_bounds: None,
+                    extra_cost: 0,
                 });
             }
         }
@@ -521,6 +529,7 @@ fn route_point_to_point_with_bounds_and_initial_strength(
     additional_allowed_contacts: &[Position],
     initial_strength: usize,
     cost_model: RouteCostModel,
+    congestion: &CongestionMap,
 ) -> Result<(RoutedNet, World3D), RouteFailure> {
     route_point_to_point_with_initial_queue(
         world,
@@ -539,10 +548,12 @@ fn route_point_to_point_with_bounds_and_initial_strength(
                 strength: initial_strength,
             }],
             pending_bounds: None,
+            extra_cost: 0,
         }],
         strategy,
         additional_allowed_contacts,
         cost_model,
+        congestion,
     )
 }
 
@@ -554,6 +565,7 @@ pub(crate) fn route_point_to_point_from_initial_state(
     strategy: GlobalRoutingStrategy,
     additional_allowed_contacts: &[Position],
 ) -> Result<(RoutedNet, World3D), RouteFailure> {
+    let congestion = CongestionMap::new();
     route_point_to_point_from_initial_state_with_cost(
         world,
         source,
@@ -562,6 +574,7 @@ pub(crate) fn route_point_to_point_from_initial_state(
         strategy,
         additional_allowed_contacts,
         RouteCostModel::default(),
+        &congestion,
     )
 }
 
@@ -571,6 +584,25 @@ pub(crate) fn route_point_to_point_with_cost_model(
     sink: Position,
     strategy: GlobalRoutingStrategy,
     cost_model: RouteCostModel,
+) -> Result<(RoutedNet, World3D), RouteFailure> {
+    let congestion = CongestionMap::new();
+    route_point_to_point_with_cost_model_and_congestion(
+        world,
+        source,
+        sink,
+        strategy,
+        cost_model,
+        &congestion,
+    )
+}
+
+pub fn route_point_to_point_with_cost_model_and_congestion(
+    world: &World3D,
+    source: Position,
+    sink: Position,
+    strategy: GlobalRoutingStrategy,
+    cost_model: RouteCostModel,
+    congestion: &CongestionMap,
 ) -> Result<(RoutedNet, World3D), RouteFailure> {
     let initial_strength = initial_signal_strength(world, source);
     let initial_state = RouteSearchState {
@@ -583,6 +615,7 @@ pub(crate) fn route_point_to_point_with_cost_model(
             strength: initial_strength,
         }],
         pending_bounds: None,
+        extra_cost: 0,
     };
 
     route_point_to_point_from_initial_state_with_cost(
@@ -593,6 +626,7 @@ pub(crate) fn route_point_to_point_with_cost_model(
         strategy,
         &[],
         cost_model,
+        congestion,
     )
 }
 
@@ -604,6 +638,7 @@ fn route_point_to_point_from_initial_state_with_cost(
     strategy: GlobalRoutingStrategy,
     additional_allowed_contacts: &[Position],
     cost_model: RouteCostModel,
+    congestion: &CongestionMap,
 ) -> Result<(RoutedNet, World3D), RouteFailure> {
     let goal = RouteGoal::for_sink(world, sink);
     route_point_to_point_with_initial_queue(
@@ -617,6 +652,7 @@ fn route_point_to_point_from_initial_state_with_cost(
         strategy,
         additional_allowed_contacts,
         cost_model,
+        congestion,
     )
     .or_else(|_| {
         route_point_to_point_with_initial_queue(
@@ -630,6 +666,7 @@ fn route_point_to_point_from_initial_state_with_cost(
             strategy,
             additional_allowed_contacts,
             cost_model,
+            congestion,
         )
     })
 }
@@ -645,6 +682,7 @@ fn route_point_to_point_with_initial_queue(
     strategy: GlobalRoutingStrategy,
     additional_allowed_contacts: &[Position],
     cost_model: RouteCostModel,
+    congestion: &CongestionMap,
 ) -> Result<(RoutedNet, World3D), RouteFailure> {
     let initial_visited = initial_states
         .iter()
@@ -741,6 +779,9 @@ fn route_point_to_point_with_initial_queue(
                                 signal_strength: next_strength,
                                 powered_taps,
                                 pending_bounds: None,
+                                extra_cost: state.extra_cost
+                                    + cost_model
+                                        .congestion_cost(redstone_node.position, congestion),
                             });
                         }
                     }
@@ -788,6 +829,9 @@ fn route_point_to_point_with_initial_queue(
                                     signal_strength: MAX_REDSTONE_STRENGTH,
                                     powered_taps,
                                     pending_bounds: None,
+                                    extra_cost: state.extra_cost
+                                        + cost_model
+                                            .congestion_cost(repeater_node.position, congestion),
                                 });
                             }
                         }
@@ -996,4 +1040,103 @@ pub(crate) fn place_support_cobble_if_needed(
         return None;
     }
     Some(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::congestion::CongestionConfig;
+    use super::*;
+    use crate::world::block::{Block, BlockKind, Direction};
+    use crate::world::position::DimSize;
+
+    fn cobble() -> Block {
+        Block {
+            kind: BlockKind::Cobble {
+                on_count: 0,
+                on_base_count: 0,
+            },
+            direction: Direction::None,
+        }
+    }
+
+    fn redstone_block() -> Block {
+        Block {
+            kind: BlockKind::Redstone {
+                on_count: 0,
+                state: 0,
+                strength: 0,
+            },
+            direction: Direction::None,
+        }
+    }
+
+    fn route_test_world() -> (World3D, Position, Position) {
+        let source = Position(0, 1, 1);
+        let sink = Position(5, 1, 1);
+        let mut world = World3D::new(DimSize(8, 4, 3));
+        world[source.down().unwrap()] = cobble();
+        world[source] = redstone_block();
+        world[sink.down().unwrap()] = cobble();
+        world[sink] = redstone_block();
+        world.initialize_redstone_states();
+        (world, source, sink)
+    }
+
+    #[test]
+    fn empty_congestion_map_preserves_the_astar_route() -> eyre::Result<()> {
+        let (world, source, sink) = route_test_world();
+        let (baseline, _) =
+            route_point_to_point_with_strategy(&world, source, sink, GlobalRoutingStrategy::AStar)
+                .expect("baseline route");
+        let (routed, _) = route_point_to_point_with_cost_model_and_congestion(
+            &world,
+            source,
+            sink,
+            GlobalRoutingStrategy::AStar,
+            RouteCostModel::default(),
+            &CongestionMap::new(),
+        )
+        .expect("congestion-aware route");
+
+        assert_eq!(baseline.path, routed.path);
+        Ok(())
+    }
+
+    #[test]
+    fn present_overuse_pushes_the_route_around_the_congested_cell() -> eyre::Result<()> {
+        let (world, source, sink) = route_test_world();
+        let (baseline, _) =
+            route_point_to_point_with_strategy(&world, source, sink, GlobalRoutingStrategy::AStar)
+                .expect("baseline route");
+        let congested = baseline.path[baseline.path.len() / 2];
+        assert_ne!(congested, source);
+        assert_ne!(congested, sink);
+
+        let mut map = CongestionMap::new();
+        map.add_route(&[congested, congested]);
+        let model = RouteCostModel {
+            congestion: CongestionConfig {
+                present_penalty: 100,
+                history_penalty: 0,
+            },
+            ..Default::default()
+        };
+
+        let (routed, _) = route_point_to_point_with_cost_model_and_congestion(
+            &world,
+            source,
+            sink,
+            GlobalRoutingStrategy::AStar,
+            model,
+            &map,
+        )
+        .expect("congestion-aware route");
+
+        assert!(
+            !routed.path.contains(&congested),
+            "route still crosses congested cell {congested:?}: {:?}",
+            routed.path
+        );
+        Ok(())
+    }
 }

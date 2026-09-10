@@ -5,15 +5,17 @@
 //! Turn and repeater terms are available for future cost-driven routing and
 //! are zero by default so extraction stays behavior-equivalent.
 
+use super::congestion::{CongestionConfig, CongestionMap};
 use super::state::RouteSearchState;
 use crate::world::position::Position;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RouteCostModel {
+pub struct RouteCostModel {
     pub(crate) step_cost: usize,
     pub(crate) turn_cost: usize,
     pub(crate) repeater_cost: usize,
     pub(crate) low_strength_penalty: usize,
+    pub(crate) congestion: CongestionConfig,
 }
 
 impl Default for RouteCostModel {
@@ -23,6 +25,7 @@ impl Default for RouteCostModel {
             turn_cost: 0,
             repeater_cost: 0,
             low_strength_penalty: 4,
+            congestion: CongestionConfig::default(),
         }
     }
 }
@@ -41,6 +44,10 @@ impl RouteCostModel {
         }
 
         cost
+    }
+
+    pub(crate) fn congestion_cost(&self, position: Position, map: &CongestionMap) -> usize {
+        map.cell_cost(position, &self.congestion)
     }
 
     pub(crate) fn low_strength_penalty(&self, state: &RouteSearchState) -> usize {
@@ -93,6 +100,7 @@ mod tests {
                 strength: 15,
             }],
             pending_bounds: None,
+            extra_cost: 0,
         }
     }
 

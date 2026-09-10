@@ -256,6 +256,7 @@ impl AStarPriority {
         };
         Self {
             estimated_total_cost: cost_model.weighted_route_cost(state)
+                + state.extra_cost
                 + manhattan_to_sink
                 + low_strength_penalty,
             route_len,
@@ -297,6 +298,7 @@ mod tests {
                 strength: 15,
             }],
             pending_bounds: None,
+            extra_cost: 0,
         }
     }
 

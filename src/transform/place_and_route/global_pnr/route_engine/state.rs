@@ -22,6 +22,9 @@ pub(crate) struct RouteSearchState {
     pub(crate) signal_strength: usize,
     pub(crate) powered_taps: Vec<PoweredRouteSource>,
     pub(crate) pending_bounds: Option<Vec<PlaceBound>>,
+    /// Congestion cost accumulated along the route. Zero while negotiated
+    /// congestion is disabled, so priority stays behavior-equivalent.
+    pub(crate) extra_cost: usize,
 }
 
 pub(crate) fn route_visited_key(
