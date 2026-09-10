@@ -175,6 +175,16 @@ pub fn load_prepared_pnr_snapshot(
     let mut embedded = GlobalPnrConfig::default();
     apply_routable_document(&document, &mut embedded)?;
     effective_config.candidate = embedded.candidate;
+    // A snapshot may carry the cell library that produced its candidates; it
+    // must be restored before the preparation fingerprint is checked.
+    if let Some(bytes) = source.read_optional("pnr/cell-library.json")? {
+        let text = std::str::from_utf8(&bytes).wrap_err("snapshot cell library is not UTF-8")?;
+        let library = super::cell_library::CellLibrary::from_json(text)?;
+        effective_config.candidate = effective_config
+            .candidate
+            .clone()
+            .with_cell_library(library);
+    }
     let snapshot_pnr = document
         .design_bindings
         .get(&document.design.top)

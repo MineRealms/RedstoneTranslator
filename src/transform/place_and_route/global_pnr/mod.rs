@@ -287,6 +287,7 @@ fn candidate_parity_hash(candidate: &LayoutCandidate) -> String {
     blocked_cells.sort();
     debug_parity_hash(&(
         candidate.bbox,
+        candidate.halo,
         blocks,
         ports,
         occupied_cells,
@@ -314,6 +315,9 @@ pub struct GlobalPnrResult {
     pub config_snapshot: Value,
     pub physical_intent: Option<ResolvedPhysicalIntent>,
     pub constraint_report: Vec<ConstraintSatisfaction>,
+    /// The cell library used for this run. Non-empty libraries are emitted to
+    /// the snapshot so replay restores the exact candidate configuration.
+    pub cell_library: crate::transform::place_and_route::global_pnr::cell_library::CellLibrary,
 }
 
 impl SnapshotProduct for GlobalPnrResult {
@@ -331,6 +335,10 @@ impl SnapshotProduct for GlobalPnrResult {
             }),
         )?;
         emit_json("pnr/config.json", self.config_snapshot.clone())?;
+        if !self.cell_library.implementations.is_empty() {
+            let library = serde_json::from_str::<Value>(&self.cell_library.to_json()?)?;
+            emit_json("pnr/cell-library.json", library)?;
+        }
         if let Some(intent) = &self.physical_intent {
             emit_json("intent/resolved.json", intent)?;
             emit_json("intent/report.json", &self.constraint_report)?;
@@ -809,6 +817,7 @@ pub fn run_prepared_pnr_with_visualization(
         config_snapshot: global_pnr_config_snapshot(config),
         physical_intent: config.physical_intent.clone(),
         constraint_report,
+        cell_library: config.candidate.cell_library.clone(),
     })
 }
 
@@ -1475,6 +1484,7 @@ fn run_prepared_leaf(
         config_snapshot: global_pnr_config_snapshot(config),
         physical_intent: config.physical_intent.clone(),
         constraint_report,
+        cell_library: config.candidate.cell_library.clone(),
     })
 }
 
@@ -1917,6 +1927,32 @@ mod tests {
         assert_ne!(
             key,
             routable_candidate_shape_fingerprint(&module, &config, Some(&contract))
+        );
+    }
+
+    #[test]
+    fn candidate_parity_hash_includes_halo() {
+        let world = {
+            let mut world = World3D::new(DimSize(2, 2, 2));
+            world[Position(0, 0, 0)] = crate::world::block::Block {
+                kind: BlockKind::RedstoneBlock,
+                ..Default::default()
+            };
+            world
+        };
+        let mut first = LayoutCandidate::from_world("m".to_owned(), world, Vec::new()).unwrap();
+        let mut second = first.clone();
+        second.halo = 3;
+
+        assert_ne!(
+            candidate_parity_hash(&first),
+            candidate_parity_hash(&second)
+        );
+
+        first.halo = 3;
+        assert_eq!(
+            candidate_parity_hash(&first),
+            candidate_parity_hash(&second)
         );
     }
 

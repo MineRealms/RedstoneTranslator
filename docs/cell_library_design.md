@@ -52,6 +52,16 @@ computed from the resolved policies, adding or changing a library entry
 automatically invalidates prepared snapshots and persistent candidate caches
 that were produced under a different library.
 
+## Using a library
+
+- CLI: `--cell-library path/to/library.json` loads a library and applies it to
+  fresh `.v` and `.rcir` compiles.
+- Snapshots: a non-empty library is emitted to `pnr/cell-library.json`, and
+  `load_prepared_pnr_snapshot` restores it before the preparation fingerprint
+  is checked, so `.rsnap` replay reproduces the exact candidate configuration.
+  Replay ignores an explicit `--cell-library`; the embedded library wins.
+- Programmatic: `CandidatePolicySet::with_cell_library`.
+
 ## Serialization
 
 `CellLibrary::to_json` / `CellLibrary::from_json` use a versioned JSON DTO that

@@ -92,6 +92,9 @@ a reusable library of verified physical candidates".
       halo reserved by placement slot sizing and overlap validation, and the
       contract included in the preparation fingerprint and persistent cache
       key. `allowed_transforms` and `max_delay` are recorded but not consumed.
+- [x] Make the library usable: `--cell-library` CLI flag, `pnr/cell-library.json`
+      snapshot artifact, and restore on `.rsnap` replay before the preparation
+      fingerprint check.
 - [ ] Named implementation variants of the logical target mapping
       (`std.xor -> xor.nor_network`, ...).
 - [ ] Auto-populate built-in library entries for the compiler's known special
@@ -141,6 +144,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | Step 2a | Candidate metric vector, Pareto frontier, cache identity hardening | 293 non-heavy tests |
 | Step 2b | Cell library model, physical contract, JSON round-trip, policy resolution | 298 non-heavy tests |
 | Step 2c | Contract consumption: isolation, halo placement, fingerprints | 301 non-heavy tests |
+| Step 2d | Library CLI, snapshot embedding, replay restore, halo in parity hash | 302 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

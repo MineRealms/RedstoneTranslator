@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+use eyre::WrapErr;
 use mimalloc::MiMalloc;
 use redstone_compiler::ir::{LogicalDesign, RcirDocument};
 use redstone_compiler::snapshot::{compile_with_snapshot, SnapshotOptions};
+use redstone_compiler::transform::place_and_route::global_pnr::cell_library::CellLibrary;
 use redstone_compiler::transform::place_and_route::global_pnr::topology::ResolvedPnrTopology;
 use redstone_compiler::transform::place_and_route::global_pnr::{
     apply_routable_document, emit_prepared_pnr_snapshot, load_prepared_pnr_snapshot,
@@ -31,6 +33,23 @@ pub struct CompilerOption {
     /// Reuse structurally identical local-placement candidates across runs.
     #[structopt(long, parse(from_os_str))]
     pub candidate_cache: Option<PathBuf>,
+
+    /// Reusable cell library (JSON) applied to local candidate policies.
+    /// Replay restores the library embedded in the snapshot instead.
+    #[structopt(long, parse(from_os_str))]
+    pub cell_library: Option<PathBuf>,
+}
+
+fn load_cell_library(path: &std::path::Path) -> eyre::Result<CellLibrary> {
+    let source = std::fs::read_to_string(path)?;
+    CellLibrary::from_json(&source)
+        .wrap_err_with(|| format!("load cell library {}", path.display()))
+}
+
+fn apply_cell_library(config: &mut GlobalPnrConfig, library: Option<CellLibrary>) {
+    if let Some(library) = library {
+        config.candidate = config.candidate.clone().with_cell_library(library);
+    }
 }
 
 fn main() -> eyre::Result<()> {
@@ -46,6 +65,8 @@ fn main() -> eyre::Result<()> {
 }
 
 fn replay_snapshot_input(opt: CompilerOption) -> eyre::Result<()> {
+    // Replay restores the cell library embedded in the snapshot; an explicit
+    // `--cell-library` only affects fresh compiles.
     let mut base_config = GlobalPnrConfig::default();
     base_config.candidate_cache_dir = opt.candidate_cache.clone();
     let prepare_config = PnrPrepareConfig::from(&base_config);
@@ -99,6 +120,11 @@ fn compile_verilog_input(opt: CompilerOption) -> eyre::Result<()> {
         .and_then(|name| name.to_str())
         .unwrap_or("source.v");
     let logical = LogicalDesign::from_verilog_source_named(&source, source_name)?;
+    let cell_library = opt
+        .cell_library
+        .as_deref()
+        .map(load_cell_library)
+        .transpose()?;
     let Some(output) = opt.output else {
         let cells = logical
             .modules
@@ -127,6 +153,7 @@ fn compile_verilog_input(opt: CompilerOption) -> eyre::Result<()> {
     let mut config = GlobalPnrConfig::default();
     config.physical_intent = physical_intent;
     config.candidate_cache_dir = opt.candidate_cache.clone();
+    apply_cell_library(&mut config, cell_library);
     compile_with_snapshot(options, || {
         emit_intent_source(intent_source.as_ref())?;
         place_and_route_logical_design_with_visualization(&logical, &config)
@@ -144,6 +171,11 @@ fn compile_verilog_input(opt: CompilerOption) -> eyre::Result<()> {
 fn compile_rcir_input(opt: CompilerOption) -> eyre::Result<()> {
     let source = std::fs::read_to_string(&opt.input)?;
     let ir: RcirDocument = source.parse()?;
+    let cell_library = opt
+        .cell_library
+        .as_deref()
+        .map(load_cell_library)
+        .transpose()?;
     let Some(output) = opt.output else {
         match &ir {
             RcirDocument::Logical(design) => println!(
@@ -177,6 +209,7 @@ fn compile_rcir_input(opt: CompilerOption) -> eyre::Result<()> {
             config.physical_intent = physical_intent.clone();
         }
     }
+    apply_cell_library(&mut config, cell_library);
     match &ir {
         RcirDocument::Logical(design) => compile_with_snapshot(options, || {
             emit_intent_source(intent_source.as_ref())?;
