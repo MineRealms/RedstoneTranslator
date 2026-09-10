@@ -83,12 +83,18 @@ a reusable library of verified physical candidates".
       module shape, and candidate policy are all part of the fingerprint.
 - [x] Tests: dominance rules, frontier trade-offs, frontier limit, generated
       candidates contain no dominated pair, fingerprint sensitivity.
-- [ ] Define a stable cell/recipe model (`*.rcell`-like) separate from
-      per-design floorplan intent (see `physical_design_intent.md`).
-- [ ] Add physical-contract fields: halo, required isolation, legal
-      transforms, delay vector.
-- [ ] Cache verified candidates by target + implementation + recipe (the
-      current key covers shape and policy, not a named recipe yet).
+- [x] Define a stable cell/recipe model (`*.rcell`-like) separate from
+      per-design floorplan intent (see `docs/cell_library_design.md`):
+      `CellLibrary`/`CellImplementation`/`CellPhysicalContract`, versioned JSON,
+      resolved through `CandidatePolicySet` and covered by the preparation
+      fingerprint.
+- [ ] Add physical-contract fields to generated candidates (halo, required
+      isolation, legal transforms, delay vector) and consume them in global
+      P&R.
+- [ ] Named implementation variants of the logical target mapping
+      (`std.xor -> xor.nor_network`, ...).
+- [ ] Auto-populate built-in library entries for the compiler's known special
+      cases and cache candidates by implementation name.
 
 ### Step 3 - Routable IR expressiveness
 
@@ -132,6 +138,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | Step 4a | FSM frontend: else/case/multi-statement/negedge, `Eq` operator | 283 non-heavy tests |
 | Step 4b | `==`/`!=`, ANSI headers, bit selects | 288 non-heavy tests |
 | Step 2a | Candidate metric vector, Pareto frontier, cache identity hardening | 293 non-heavy tests |
+| Step 2b | Cell library model, physical contract, JSON round-trip, policy resolution | 298 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

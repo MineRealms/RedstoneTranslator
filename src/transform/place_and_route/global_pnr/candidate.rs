@@ -38,6 +38,9 @@ pub struct CandidatePolicySet {
     pub default: UnitCandidateConfig,
     pub definition_overrides: BTreeMap<String, UnitCandidateConfig>,
     pub pin_search: BTreeMap<(String, String), Vec<Position>>,
+    /// Reusable named cell implementations. A matching implementation wins
+    /// over the default policy but not over an explicit definition override.
+    pub cell_library: crate::transform::place_and_route::global_pnr::cell_library::CellLibrary,
 }
 
 impl CandidatePolicySet {
@@ -46,7 +49,18 @@ impl CandidatePolicySet {
             default,
             definition_overrides: BTreeMap::new(),
             pin_search: BTreeMap::new(),
+            cell_library:
+                crate::transform::place_and_route::global_pnr::cell_library::CellLibrary::redstone_v1(
+                ),
         }
+    }
+
+    pub fn with_cell_library(
+        mut self,
+        library: crate::transform::place_and_route::global_pnr::cell_library::CellLibrary,
+    ) -> Self {
+        self.cell_library = library;
+        self
     }
 
     pub fn with_definition_override(
@@ -76,6 +90,11 @@ impl CandidatePolicySet {
             .definition_overrides
             .get(definition)
             .cloned()
+            .or_else(|| {
+                self.cell_library
+                    .implementation_for_definition(definition)
+                    .map(|implementation| implementation.candidate.clone())
+            })
             .unwrap_or_else(|| self.default.clone());
         for ((owner, port), positions) in &self.pin_search {
             if owner == definition {
@@ -675,6 +694,47 @@ mod tests {
 
         assert_eq!(port, input_redstone);
         assert!(world[switch].kind.is_air());
+    }
+
+    #[test]
+    fn cell_library_implementation_overrides_default_but_not_explicit_override() {
+        use super::super::cell_library::{CellImplementation, CellLibrary, CellPhysicalContract};
+
+        let library = CellLibrary {
+            implementations: vec![CellImplementation {
+                name: "d_latch.compact".to_owned(),
+                definitions: vec!["d_latch".to_owned()],
+                candidate: UnitCandidateConfig {
+                    max_candidates: 7,
+                    ..Default::default()
+                },
+                contract: CellPhysicalContract::default(),
+                priority: 1,
+            }],
+            ..CellLibrary::redstone_v1()
+        };
+        let policies = CandidatePolicySet::default().with_cell_library(library.clone());
+
+        assert_eq!(
+            policies.effective_for_definition("d_latch").max_candidates,
+            7
+        );
+        assert_eq!(
+            policies.effective_for_definition("other").max_candidates,
+            UnitCandidateConfig::default().max_candidates
+        );
+
+        let explicit = policies.with_definition_override(
+            "d_latch",
+            UnitCandidateConfig {
+                max_candidates: 9,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            explicit.effective_for_definition("d_latch").max_candidates,
+            9
+        );
     }
 
     #[test]

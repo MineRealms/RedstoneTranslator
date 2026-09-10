@@ -311,7 +311,7 @@ pub(super) fn candidate_spec_from_policy(policy: &UnitCandidateConfig) -> Candid
     }
 }
 
-fn candidate_policy_from_spec(spec: &CandidateSpec) -> UnitCandidateConfig {
+pub(super) fn candidate_policy_from_spec(spec: &CandidateSpec) -> UnitCandidateConfig {
     UnitCandidateConfig {
         dim: DimSize(spec.search_box[0], spec.search_box[1], spec.search_box[2]),
         local_config: local_config(spec.local_placer.clone()),

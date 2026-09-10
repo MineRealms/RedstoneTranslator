@@ -1,6 +1,7 @@
 pub mod assembly;
 pub mod candidate;
 mod candidate_cache;
+pub mod cell_library;
 pub mod diagnostics;
 mod free_3d;
 pub mod heuristics;
