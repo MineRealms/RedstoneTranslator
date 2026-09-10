@@ -14,14 +14,14 @@ use crate::transform::place_and_route::global_pnr::progress::GlobalPnrProgress;
 pub(crate) use crate::transform::place_and_route::global_pnr::route_engine::first_invalid_active_route;
 use crate::transform::place_and_route::global_pnr::route_engine::{
     adapter_allowed_contacts, adapter_touches_forbidden_existing_signal, added_route_blocks,
-    eager_route_failure_reason, initial_signal_strength, is_route_terminal,
-    isolated_output_repeater_initial_states, place_support_cobble_if_needed, powered_route_source,
-    redstone_network_positions, route_candidate_powers_sink,
-    route_point_to_point_from_initial_state,
+    assemble_world_with_routes, eager_route_failure_reason, initial_signal_strength,
+    is_route_terminal, isolated_output_repeater_initial_states, negotiate_routed_nets,
+    place_support_cobble_if_needed, powered_route_source, redstone_network_positions,
+    route_candidate_powers_sink, route_point_to_point_from_initial_state,
     route_point_to_point_with_strategy_and_allowed_contacts,
     route_point_to_point_with_strategy_and_allowed_contacts_and_initial_strength,
-    routeable_output_taps, sorted_route_bounds, PoweredRouteSource, RouteSearchState,
-    MAX_REDSTONE_STRENGTH,
+    routeable_output_taps, sorted_route_bounds, PathfinderConfig, PoweredRouteSource,
+    RouteSearchState, MAX_REDSTONE_STRENGTH,
 };
 pub use crate::transform::place_and_route::global_pnr::route_engine::{
     route_point_to_point, route_point_to_point_with_strategy,
@@ -148,6 +148,8 @@ pub enum RouteValidationMode {
 pub struct GlobalRoutingConfig {
     pub strategy: GlobalRoutingStrategy,
     pub validation: RouteValidationMode,
+    /// Optional PathFinder-style negotiation pass over the routed nets.
+    pub pathfinder: Option<PathfinderConfig>,
 }
 
 impl Default for GlobalRoutingConfig {
@@ -155,6 +157,7 @@ impl Default for GlobalRoutingConfig {
         Self {
             strategy: GlobalRoutingStrategy::AStar,
             validation: RouteValidationMode::Incremental,
+            pathfinder: None,
         }
     }
 }
@@ -503,6 +506,7 @@ fn route_module_variables_with_order_from_prefix_impl(
         .filter(|label| !label.contains('.'))
         .map(str::to_owned)
         .collect::<HashSet<_>>();
+    let base_world = route_world.clone();
     if let Err(error) = route_top_input_ports(
         &plan.top_inputs,
         candidates,
@@ -532,6 +536,16 @@ fn route_module_variables_with_order_from_prefix_impl(
             error,
             routed_nets: routes,
         });
+    }
+
+    if let Some(pathfinder) = config.pathfinder {
+        let outcome = negotiate_routed_nets(&base_world, &routes, &pathfinder);
+        progress.detail(format!(
+            "pathfinder negotiation: rerouted={} overused_cells={}",
+            outcome.rerouted, outcome.overused_cells
+        ));
+        routes = outcome.routes;
+        route_world = assemble_world_with_routes(&base_world, &routes);
     }
 
     if config.validation == RouteValidationMode::Incremental

@@ -354,6 +354,17 @@ for iteration in 0..max_iterations:
 - This is the standard answer to "greedy routing boxes itself in": it repairs
   instead of committing.
 
+Implemented in `route_engine::pathfinder` (standalone loop over flat nets) and
+`route_engine::negotiation` (the router post-pass). The post-pass runs after
+the greedy net loop: it builds the congestion map from the routed paths, folds
+present overuse into history, rips up routes crossing overused cells, and
+reroutes them with penalties. Only routes with the default simple power
+contract are rerouted; adapter routes with extra required positions are left
+alone. Every accepted reroute must keep its power contract on the assembled
+world, and candidates whose assembly would leave unsupported redstone are
+rejected. Enable it with `GlobalRoutingConfig::pathfinder` (default off); the
+setting round-trips through RCIR snapshots and the text format.
+
 ### 8.1 Minecraft-specific congestion
 
 FPGA congestion counts wire resources; Minecraft congestion must model voxels

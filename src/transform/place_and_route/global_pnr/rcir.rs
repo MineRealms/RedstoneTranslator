@@ -4,11 +4,11 @@ use eyre::{ContextCompat, WrapErr};
 
 use crate::ir::{
     CandidateSpec, CongestionSpec, Free3dSweepSpec, InputPlacementSpec, LayerAssignmentSpec,
-    LocalPlacerSpec, NetOrderSpec, NotRouteSpec, ObjectiveSpec, PhysicalConstraintSpec,
-    PhysicalRegionSpec, PhysicalSpec, PlacementHeuristicSpec, PlacementSamplingSpec, PlacementSpec,
-    PnrSpec, PortRef, PreferenceSpec, RoutableDesign, RoutableDocument, RoutableModuleBody,
-    RouteStageSpec, RouteStrategySpec, RouteValidationSpec, RoutingSpec, SamplingSpec, SearchSpec,
-    TorchPlacementSpec,
+    LocalPlacerSpec, NetOrderSpec, NotRouteSpec, ObjectiveSpec, PathfinderSpec,
+    PhysicalConstraintSpec, PhysicalRegionSpec, PhysicalSpec, PlacementHeuristicSpec,
+    PlacementSamplingSpec, PlacementSpec, PnrSpec, PortRef, PreferenceSpec, RoutableDesign,
+    RoutableDocument, RoutableModuleBody, RouteStageSpec, RouteStrategySpec, RouteValidationSpec,
+    RoutingSpec, SamplingSpec, SearchSpec, TorchPlacementSpec,
 };
 use crate::transform::place_and_route::global_pnr::candidate::{
     CandidatePolicySet, UnitCandidateConfig,
@@ -20,6 +20,9 @@ use crate::transform::place_and_route::global_pnr::physical_intent::{
 use crate::transform::place_and_route::global_pnr::policy::{
     Free3DPlacementConfig, GlobalPnrPolicies, GlobalSearchBudget, LayerAssignmentStrategy,
     LayeredPlacementConfig, PlacementCostWeights, PlacementHeuristic, RoutingCongestionConfig,
+};
+use crate::transform::place_and_route::global_pnr::route_engine::{
+    PathfinderConfig, RouteCostModel,
 };
 use crate::transform::place_and_route::global_pnr::router::{
     GlobalRoutingConfig, GlobalRoutingStrategy, NetOrderStrategy, RouteValidationMode,
@@ -633,30 +636,43 @@ fn route_stage_spec(config: GlobalRoutingConfig) -> RouteStageSpec {
             RouteValidationMode::Incremental => RouteValidationSpec::Incremental,
             RouteValidationMode::Deferred => RouteValidationSpec::Deferred,
         },
+        pathfinder: config.pathfinder.map(|pathfinder| PathfinderSpec {
+            max_iterations: pathfinder.max_iterations,
+            present_penalty: pathfinder.present_penalty,
+            history_penalty: pathfinder.history_penalty,
+        }),
     }
 }
 fn route_stage_config(spec: RouteStageSpec) -> GlobalRoutingConfig {
-    GlobalRoutingConfig {
-        strategy: match spec.strategy {
-            RouteStrategySpec::BreadthFirst => GlobalRoutingStrategy::BreadthFirst,
-            RouteStrategySpec::AStar => GlobalRoutingStrategy::AStar,
-            RouteStrategySpec::DirectGreedy { max_steps } => {
-                GlobalRoutingStrategy::DirectGreedy { max_steps }
-            }
-            RouteStrategySpec::GreedyBeam {
-                width,
-                max_expansions,
-                variant_seed,
-            } => GlobalRoutingStrategy::GreedyBeam {
-                beam_width: width,
-                max_expansions,
-                variant_seed,
-            },
+    let strategy = match spec.strategy {
+        RouteStrategySpec::BreadthFirst => GlobalRoutingStrategy::BreadthFirst,
+        RouteStrategySpec::AStar => GlobalRoutingStrategy::AStar,
+        RouteStrategySpec::DirectGreedy { max_steps } => {
+            GlobalRoutingStrategy::DirectGreedy { max_steps }
+        }
+        RouteStrategySpec::GreedyBeam {
+            width,
+            max_expansions,
+            variant_seed,
+        } => GlobalRoutingStrategy::GreedyBeam {
+            beam_width: width,
+            max_expansions,
+            variant_seed,
         },
+    };
+    GlobalRoutingConfig {
+        strategy,
         validation: match spec.validation {
             RouteValidationSpec::Incremental => RouteValidationMode::Incremental,
             RouteValidationSpec::Deferred => RouteValidationMode::Deferred,
         },
+        pathfinder: spec.pathfinder.map(|pathfinder| PathfinderConfig {
+            max_iterations: pathfinder.max_iterations,
+            present_penalty: pathfinder.present_penalty,
+            history_penalty: pathfinder.history_penalty,
+            cost_model: RouteCostModel::default(),
+            strategy,
+        }),
     }
 }
 fn net_order_spec(value: NetOrderStrategy) -> NetOrderSpec {
@@ -908,6 +924,55 @@ mod tests {
     };
 
     #[test]
+    fn route_stage_round_trips_pathfinder_settings() {
+        let config = GlobalRoutingConfig {
+            strategy: GlobalRoutingStrategy::AStar,
+            validation: RouteValidationMode::Incremental,
+            pathfinder: Some(PathfinderConfig {
+                max_iterations: 4,
+                present_penalty: 7,
+                history_penalty: 3,
+                cost_model: RouteCostModel::default(),
+                strategy: GlobalRoutingStrategy::AStar,
+            }),
+        };
+
+        let spec = route_stage_spec(config);
+        assert_eq!(
+            spec.pathfinder,
+            Some(PathfinderSpec {
+                max_iterations: 4,
+                present_penalty: 7,
+                history_penalty: 3,
+            })
+        );
+        assert_eq!(route_stage_config(spec), config);
+
+        let json = serde_json::to_string(&spec).expect("serialize route stage");
+        let restored: RouteStageSpec =
+            serde_json::from_str(&json).expect("deserialize route stage");
+        assert_eq!(restored, spec);
+    }
+
+    #[test]
+    fn legacy_route_stage_without_pathfinder_still_deserializes() {
+        let mut value = serde_json::to_value(RouteStageSpec {
+            strategy: RouteStrategySpec::AStar,
+            validation: RouteValidationSpec::Incremental,
+            pathfinder: None,
+        })
+        .expect("serialize route stage");
+        value
+            .as_object_mut()
+            .expect("route stage object")
+            .remove("pathfinder");
+
+        let restored: RouteStageSpec =
+            serde_json::from_value(value).expect("deserialize legacy route stage");
+        assert_eq!(restored.pathfinder, None);
+    }
+
+    #[test]
     fn config_round_trips_through_routable_document() -> eyre::Result<()> {
         let design = RoutableDesign {
             version: ROUTABLE_IR_VERSION,
@@ -956,12 +1021,22 @@ mod tests {
                 })
             })
             .collect();
+        original.routing.pathfinder = Some(PathfinderConfig {
+            max_iterations: 4,
+            present_penalty: 7,
+            history_penalty: 3,
+            cost_model: RouteCostModel::default(),
+            strategy: original.routing.strategy,
+        });
         let document = routable_document_from_config(&design, &original)?;
         let text = document.to_string();
         assert!(text.contains("profile pnr.candidate \"leaf-cell-search\""));
         assert!(text.contains("profile pnr.design \"leaf-design\""));
         assert!(text.contains("@pnr.candidate(profile = \"leaf-cell-search\")"));
         assert!(text.contains("@pnr.design(profile = \"leaf-design\")"));
+        assert!(text.contains("pathfinder iterations 4;"));
+        assert!(text.contains("present-penalty 7;"));
+        assert!(text.contains("history-penalty 3;"));
         assert!(!text.contains("candidate-defaults"));
         let parsed: RoutableDocument = text.parse()?;
         let mut restored = GlobalPnrConfig::default();

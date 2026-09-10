@@ -8,6 +8,7 @@ mod congestion;
 mod cost;
 mod engine;
 mod goal;
+mod negotiation;
 mod pathfinder;
 mod queue;
 mod state;
@@ -27,6 +28,7 @@ pub use engine::{
     route_point_to_point, route_point_to_point_with_cost_model_and_congestion,
     route_point_to_point_with_strategy,
 };
+pub(crate) use negotiation::{assemble_world_with_routes, negotiate_routed_nets};
 pub use pathfinder::{
     negotiate_routes, PathfinderConfig, PathfinderNet, PathfinderResult, PathfinderRoute,
 };

@@ -9,10 +9,11 @@ use super::routable::{
 use super::syntax::{tokenize, Token};
 use super::{
     CandidateSpec, CongestionSpec, Free3dSweepSpec, InputPlacementSpec, LayerAssignmentSpec,
-    LocalPlacerSpec, NetOrderSpec, NotRouteSpec, ObjectiveSpec, PhysicalConstraintSpec,
-    PhysicalRegionSpec, PhysicalSpec, PlacementHeuristicSpec, PlacementSamplingSpec, PlacementSpec,
-    PnrSpec, PortRef, PreferenceSpec, RoutableDocument, RouteStageSpec, RouteStrategySpec,
-    RouteValidationSpec, RoutingSpec, SamplingSpec, SearchSpec, TorchPlacementSpec,
+    LocalPlacerSpec, NetOrderSpec, NotRouteSpec, ObjectiveSpec, PathfinderSpec,
+    PhysicalConstraintSpec, PhysicalRegionSpec, PhysicalSpec, PlacementHeuristicSpec,
+    PlacementSamplingSpec, PlacementSpec, PnrSpec, PortRef, PreferenceSpec, RoutableDocument,
+    RouteStageSpec, RouteStrategySpec, RouteValidationSpec, RoutingSpec, SamplingSpec, SearchSpec,
+    TorchPlacementSpec,
 };
 
 impl fmt::Display for RoutableDesign {
@@ -381,6 +382,23 @@ fn write_route_stage(
             RouteValidationSpec::Deferred => "deferred",
         }
     )?;
+    if let Some(pathfinder) = stage.pathfinder {
+        writeln!(
+            output,
+            "      pathfinder iterations {};",
+            pathfinder.max_iterations
+        )?;
+        writeln!(
+            output,
+            "      present-penalty {};",
+            pathfinder.present_penalty
+        )?;
+        writeln!(
+            output,
+            "      history-penalty {};",
+            pathfinder.history_penalty
+        )?;
+    }
     writeln!(output, "    }}")
 }
 
@@ -1281,10 +1299,29 @@ impl Parser {
             value => eyre::bail!("unknown route validation mode `{value}`"),
         };
         self.expect_symbol(';')?;
+        let pathfinder = if self.consume_keyword("pathfinder") {
+            self.expect_keyword("iterations")?;
+            let max_iterations = self.expect_usize()?;
+            self.expect_symbol(';')?;
+            self.expect_keyword("present-penalty")?;
+            let present_penalty = self.expect_usize()?;
+            self.expect_symbol(';')?;
+            self.expect_keyword("history-penalty")?;
+            let history_penalty = self.expect_usize()?;
+            self.expect_symbol(';')?;
+            Some(PathfinderSpec {
+                max_iterations,
+                present_penalty,
+                history_penalty,
+            })
+        } else {
+            None
+        };
         self.expect_symbol('}')?;
         Ok(RouteStageSpec {
             strategy,
             validation,
+            pathfinder,
         })
     }
 

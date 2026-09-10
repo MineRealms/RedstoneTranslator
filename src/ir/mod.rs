@@ -1,6 +1,6 @@
-pub mod debug;
 #[cfg(test)]
 mod benchmarks;
+pub mod debug;
 mod flatten;
 mod leaf_graph;
 pub(crate) use leaf_graph::graph_from_routable_leaf;
@@ -26,10 +26,11 @@ pub use logical::{
 };
 pub use pnr::{
     CandidateSpec, CongestionSpec, Free3dSweepSpec, InputPlacementSpec, LayerAssignmentSpec,
-    LocalPlacerSpec, NetOrderSpec, NotRouteSpec, ObjectiveSpec, PhysicalConstraintSpec,
-    PhysicalRegionSpec, PhysicalSpec, PlacementHeuristicSpec, PlacementSamplingSpec, PlacementSpec,
-    PnrSpec, PortRef, PreferenceSpec, RoutableDocument, RouteStageSpec, RouteStrategySpec,
-    RouteValidationSpec, RoutingSpec, SamplingSpec, SearchSpec, TorchPlacementSpec,
+    LocalPlacerSpec, NetOrderSpec, NotRouteSpec, ObjectiveSpec, PathfinderSpec,
+    PhysicalConstraintSpec, PhysicalRegionSpec, PhysicalSpec, PlacementHeuristicSpec,
+    PlacementSamplingSpec, PlacementSpec, PnrSpec, PortRef, PreferenceSpec, RoutableDocument,
+    RouteStageSpec, RouteStrategySpec, RouteValidationSpec, RoutingSpec, SamplingSpec, SearchSpec,
+    TorchPlacementSpec,
 };
 pub use routable::{
     Endpoint, NetClass, RoutableDesign, RoutableInstance, RoutableModule, RoutableModuleBody,

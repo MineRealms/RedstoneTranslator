@@ -371,6 +371,80 @@ fn benchmark_pnr_baseline() -> eyre::Result<()> {
 }
 
 #[test]
+#[ignore = "full PnR pathfinder comparison; run manually with --release and MCHDL_BENCH"]
+fn benchmark_pathfinder_baseline() -> eyre::Result<()> {
+    use crate::transform::place_and_route::global_pnr::candidate::UnitCandidateConfig;
+    use crate::transform::place_and_route::global_pnr::route_engine::PathfinderConfig;
+    use crate::transform::place_and_route::global_pnr::router::{
+        GlobalRoutingConfig, GlobalRoutingStrategy, RouteValidationMode,
+    };
+    use crate::transform::place_and_route::global_pnr::{
+        place_and_route_logical_design, GlobalPnrConfig,
+    };
+
+    let filter = std::env::var("MCHDL_BENCH").ok();
+    let mut results = Vec::new();
+    for (name, source) in BENCHMARKS {
+        if filter.as_deref().is_some_and(|filter| filter != *name) {
+            continue;
+        }
+        let logical = LogicalDesign::from_verilog_source_named(source, &format!("{name}.v"))?;
+        for pathfinder in [None, Some(PathfinderConfig::default())] {
+            let routing = GlobalRoutingConfig {
+                strategy: GlobalRoutingStrategy::AStar,
+                validation: RouteValidationMode::Deferred,
+                pathfinder,
+            };
+            let config = GlobalPnrConfig {
+                show_progress: false,
+                candidate: UnitCandidateConfig {
+                    max_candidates: 1,
+                    ..Default::default()
+                }
+                .into(),
+                routing_probe: Some(routing),
+                routing,
+                ..Default::default()
+            };
+            let started = std::time::Instant::now();
+            let outcome =
+                std::panic::catch_unwind(|| place_and_route_logical_design(&logical, &config));
+            let elapsed_ms = started.elapsed().as_millis();
+            let (ok, blocks, error) = match outcome {
+                Ok(Ok(world)) => (true, world.iter_block().len(), None),
+                Ok(Err(error)) => (false, 0, Some(error.to_string())),
+                Err(_) => (false, 0, Some("panicked".to_owned())),
+            };
+            println!(
+                "{name:<14} pathfinder={} ok={ok} blocks={blocks} elapsed_ms={elapsed_ms} error={}",
+                pathfinder.is_some(),
+                error.as_deref().unwrap_or("-")
+            );
+            results.push(serde_json::json!({
+                "name": name,
+                "pathfinder": pathfinder.is_some(),
+                "ok": ok,
+                "blocks": blocks,
+                "elapsed_ms": elapsed_ms,
+                "error": error,
+            }));
+        }
+    }
+
+    let baseline = serde_json::json!({
+        "format": "redstone-compiler.benchmark-pathfinder.v1",
+        "results": results,
+    });
+    std::fs::create_dir_all("target")?;
+    let path = match filter {
+        Some(name) => format!("target/benchmark-pathfinder-{name}.json"),
+        None => "target/benchmark-pathfinder.json".to_owned(),
+    };
+    std::fs::write(path, serde_json::to_vec_pretty(&baseline)?)?;
+    Ok(())
+}
+
+#[test]
 fn random_10_placement_is_legal_and_connected() -> eyre::Result<()> {
     let metrics = measure_placement("random_10", BENCHMARKS[5].1)?;
 
@@ -442,10 +516,7 @@ fn benchmark_placement_engines_baseline() -> eyre::Result<()> {
     let filter = std::env::var("MCHDL_BENCH").ok();
     let mut results = Vec::new();
     for (name, source) in BENCHMARKS {
-        if filter
-            .as_deref()
-            .is_some_and(|filter| filter != *name)
-        {
+        if filter.as_deref().is_some_and(|filter| filter != *name) {
             continue;
         }
         let logical = LogicalDesign::from_verilog_source_named(source, &format!("{name}.v"))?;
@@ -453,6 +524,7 @@ fn benchmark_placement_engines_baseline() -> eyre::Result<()> {
             let routing = GlobalRoutingConfig {
                 strategy: GlobalRoutingStrategy::DirectGreedy { max_steps: 64 },
                 validation: RouteValidationMode::Deferred,
+                pathfinder: None,
             };
             let config = GlobalPnrConfig {
                 show_progress: false,
@@ -485,9 +557,8 @@ fn benchmark_placement_engines_baseline() -> eyre::Result<()> {
                 ..Default::default()
             };
             let started = std::time::Instant::now();
-            let outcome = std::panic::catch_unwind(|| {
-                place_and_route_logical_design(&logical, &config)
-            });
+            let outcome =
+                std::panic::catch_unwind(|| place_and_route_logical_design(&logical, &config));
             let elapsed_ms = started.elapsed().as_millis();
             let (ok, blocks, error) = match outcome {
                 Ok(Ok(world)) => (true, world.iter_block().len(), None),

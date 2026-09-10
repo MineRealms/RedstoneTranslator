@@ -197,6 +197,15 @@ pub struct RoutingSpec {
 pub struct RouteStageSpec {
     pub strategy: RouteStrategySpec,
     pub validation: RouteValidationSpec,
+    #[serde(default)]
+    pub pathfinder: Option<PathfinderSpec>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PathfinderSpec {
+    pub max_iterations: usize,
+    pub present_penalty: usize,
+    pub history_penalty: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

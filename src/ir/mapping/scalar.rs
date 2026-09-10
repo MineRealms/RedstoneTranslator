@@ -379,13 +379,9 @@ impl LeafBuilder {
                 &mut intermediates,
                 &mut builder,
             )?;
-            for (id, name) in chunk_outputs(
-                chunk,
-                chunk_index,
-                &chunk_of,
-                &consumers,
-                &output_requests,
-            ) {
+            for (id, name) in
+                chunk_outputs(chunk, chunk_index, &chunk_of, &consumers, &output_requests)
+            {
                 let local_id = local[&id];
                 builder.add_output(&name, local_id);
                 if final_names.contains(&name) {
@@ -560,13 +556,7 @@ fn chunk_prepared_node_count(
 ) -> eyre::Result<usize> {
     let mut builder = LeafBuilder::new();
     let mut scratch = HashMap::new();
-    let local = build_chunk_nodes(
-        nodes,
-        chunk,
-        producer_instance,
-        &mut scratch,
-        &mut builder,
-    )?;
+    let local = build_chunk_nodes(nodes, chunk, producer_instance, &mut scratch, &mut builder)?;
     let chunk_index = chunk_of[chunk[0]];
     for (id, name) in chunk_outputs(chunk, chunk_index, chunk_of, consumers, output_requests) {
         builder.add_output(&name, local[&id]);

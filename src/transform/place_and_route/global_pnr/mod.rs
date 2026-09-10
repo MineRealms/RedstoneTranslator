@@ -2104,6 +2104,7 @@ mod tests {
                     max_steps: 128,
                 },
                 validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+                pathfinder: None,
             }),
             routing: GlobalRoutingConfig {
                 strategy: crate::transform::place_and_route::global_pnr::router::GlobalRoutingStrategy::GreedyBeam {
@@ -2112,6 +2113,7 @@ mod tests {
                     variant_seed: 0,
                 },
                 validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+                pathfinder: None,
             },
             routing_refinement: Some(GlobalRoutingConfig {
                 strategy: crate::transform::place_and_route::global_pnr::router::GlobalRoutingStrategy::GreedyBeam {
@@ -2120,6 +2122,7 @@ mod tests {
                     variant_seed: 0,
                 },
                 validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+                pathfinder: None,
             }),
             search: GlobalSearchConfig {
                 budget: GlobalSearchBudget {
@@ -2246,6 +2249,7 @@ mod tests {
                     max_steps: 128,
                 },
                 validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+                pathfinder: None,
             }),
             routing: GlobalRoutingConfig {
                 strategy: crate::transform::place_and_route::global_pnr::router::GlobalRoutingStrategy::GreedyBeam {
@@ -2254,6 +2258,7 @@ mod tests {
                     variant_seed: 0,
                 },
                 validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+                pathfinder: None,
             },
             routing_refinement: Some(GlobalRoutingConfig {
                 strategy: crate::transform::place_and_route::global_pnr::router::GlobalRoutingStrategy::GreedyBeam {
@@ -2262,6 +2267,7 @@ mod tests {
                     variant_seed: 0,
                 },
                 validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+                pathfinder: None,
             }),
             search: GlobalSearchConfig {
                 budget: GlobalSearchBudget {
@@ -2411,6 +2417,7 @@ mod tests {
                     max_steps: 128,
                 },
                 validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+                pathfinder: None,
             }),
             routing: GlobalRoutingConfig {
                 strategy: crate::transform::place_and_route::global_pnr::router::GlobalRoutingStrategy::GreedyBeam {
@@ -2419,6 +2426,7 @@ mod tests {
                     variant_seed: 0,
                 },
                 validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+                pathfinder: None,
             },
             routing_refinement: Some(GlobalRoutingConfig {
                 strategy: crate::transform::place_and_route::global_pnr::router::GlobalRoutingStrategy::GreedyBeam {
@@ -2427,6 +2435,7 @@ mod tests {
                     variant_seed: 0,
                 },
                 validation: crate::transform::place_and_route::global_pnr::router::RouteValidationMode::Deferred,
+                pathfinder: None,
             }),
             search: GlobalSearchConfig {
                 budget: GlobalSearchBudget {
