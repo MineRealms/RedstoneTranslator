@@ -169,6 +169,70 @@ attempt where possible; reuse negotiation assembly.
 
 Acceptance: attempt peak bytes drop; non-heavy suite green.
 
+## 4.1 Active investigation — leaf candidate truth-table rejections (M0.6)
+
+**Status**: next task · **Owner**: next session · **Time box**: 30-60 minutes
+
+**Context**: the M0.5 work removed the memory wall (COW `World3D`, work budget,
+frontier cap). The remaining wall is leaf placement quality/correctness. With
+the tuned smoke-test config, the 13-node `state_next` cone produces 32
+candidates in 13.5 s at 21 MiB RSS, and **all 32 are rejected by
+`candidate_matches_truth_table`** (`candidate_truth_rejects=32`, zero port
+rejects). This is the known pre-existing failure recorded in
+`project_status.md`.
+
+**Goal**: identify the root cause of the truth-table rejections with evidence,
+then either fix it with a regression test or record the decision to replace the
+leaf realizer.
+
+### Phase 1 — dump the first failure (about 10 minutes)
+
+Add an env-gated diagnostic (`MCHDL_DEBUG_TRUTH_TABLE=1`) inside
+`candidate_matches_truth_table` (`global_pnr/candidate.rs`):
+
+- first fresh-world mismatch: mask, input names and positions, output names and
+  positions, expected vs actual `is_powered()` for every output;
+- first transition-sequence mismatch: previous mask, current mask, expected vs
+  actual.
+
+Run with a 16-minute timeout (about 15 s in practice):
+
+```text
+$env:MCHDL_PERF='1'; $env:MCHDL_DEBUG_TRUTH_TABLE='1'
+cargo test --release --lib -j 1 fsm_module_generates_world_from_child_layout_candidates -- --ignored --nocapture --test-threads=1
+```
+
+Interpretation: a fresh-world failure means combinational behavior is wrong
+(missing input, stuck output, short). A transition-only failure means the
+dynamic release/hold behavior is wrong (stale simulator state, latch/feedback,
+short that only appears after switching).
+
+### Phase 2 — localize to a gate or wire (20-40 minutes)
+
+- Output stuck or input-independent: dump `placed.world` with `{:?}` and follow
+  the driver path from `placed.outputs` back to `placed.inputs`; check the
+  `detailed_router` short/contact rules.
+- Only some masks wrong: flip one input bit at a time, then map the failing
+  net back to a leaf graph node and its placement.
+- Transition-only failure: print the output level after each `change_state` in
+  one simulator to see whether the level fails to release or fails to hold.
+- Control: run the same diagnostic on `not_chain` (which passes) to establish
+  the passing baseline.
+
+### Phase 3 — fix or pivot
+
+- Placer/routing bug: fix `local_placer/routing.rs` or `detailed_router.rs` and
+  add a regression test.
+- Verifier too strict: relax `candidate_matches_truth_table` carefully with
+  tests; the transition check exists for a reason.
+- Search quality: record the evidence and move to the leaf-realizer
+  replacement (macro library plus placement-first path).
+
+**Acceptance**: root cause identified with a printed evidence trail; either a
+fix with a regression test, or a documented decision to replace the leaf
+realizer. Keep the diagnostic env-gated if it is useful long-term, otherwise
+remove it before committing.
+
 ## 5. Acceptance red lines
 
 - Commits 3 and 4 must keep candidate/route outputs byte-identical (snapshot
