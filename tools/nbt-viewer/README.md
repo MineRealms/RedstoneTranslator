@@ -50,20 +50,32 @@ by the VS Code NBT viewer extension from:
 %LOCALAPPDATA%/vscode-nbt-nodejs/Cache/mcmeta
 ```
 
-If that source cache is missing, open a Minecraft NBT file once in the VS Code
-NBT viewer extension so it can populate its cache, then run
-`npm.cmd run prepare:mcmeta` again.
+If that source cache is missing, the script downloads the assets from the
+`misode/mcmeta` GitHub repository instead. Behind an HTTP proxy, Node 24 needs
+`NODE_USE_ENV_PROXY=1` together with `HTTPS_PROXY`/`HTTP_PROXY` for its
+built-in `fetch` to honor the proxy, for example:
+
+```powershell
+$env:HTTPS_PROXY = "http://127.0.0.1:7890"
+$env:NODE_USE_ENV_PROXY = "1"
+npm.cmd run prepare:mcmeta
+```
 
 ## Usage
 
 - Use `Open NBT` to load a single local `.nbt`, `.dat`, `.schem`,
   `.schematic`, `.litematic`, or `.mcstructure` file.
 - Use `Open Folder` to browse supported NBT-like files from a local directory.
+- Compiler output: the final world is `<design>.snapshot/<design>.nbt`; the
+  per-candidate worlds are under `<design>.snapshot/candidates/set-*/`.
 - Use the mouse to rotate the 3D view, the wheel to zoom, and `W/A/S/D`,
   `Space`, and `Shift` to move the camera.
 
 All files are opened locally in the browser. The app does not upload selected
 NBT files to a server.
+
+`npm run dev` and `npm run build` run `prepare:examples` first, which
+regenerates the tracked files under `public/examples/`.
 
 ## Build
 
