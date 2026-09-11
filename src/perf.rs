@@ -21,6 +21,24 @@ static LAYER_COPY_BYTES: AtomicUsize = AtomicUsize::new(0);
 static PEAK_RSS_BYTES: AtomicUsize = AtomicUsize::new(0);
 static BUDGET_BYTES: AtomicUsize = AtomicUsize::new(0);
 static BUDGET_EXCEEDED: AtomicBool = AtomicBool::new(false);
+static WORK_EXCEEDED: AtomicBool = AtomicBool::new(false);
+
+/// Maximum number of local placement generations before the search gives up.
+/// A deterministic guard against the exponential local search; the error is
+/// reported instead of running for minutes and producing nothing.
+pub const LOCAL_WORK_LIMIT: usize = 2_000_000;
+
+/// Maximum number of `World3D` clones a single local search may perform. Each
+/// placement generation clones many worlds internally, so this is the finer
+/// and more reliable work proxy.
+pub const LOCAL_CLONE_LIMIT: usize = 10_000_000;
+
+pub fn local_clone_limit() -> usize {
+    std::env::var("MCHDL_LOCAL_CLONE_LIMIT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(LOCAL_CLONE_LIMIT)
+}
 
 pub fn set_verbose(enabled: bool) {
     VERBOSE.store(enabled, Ordering::Relaxed);
@@ -94,6 +112,14 @@ pub fn note_budget_exceeded() {
     BUDGET_EXCEEDED.store(true, Ordering::Relaxed);
 }
 
+pub fn work_exceeded() -> bool {
+    WORK_EXCEEDED.load(Ordering::Relaxed)
+}
+
+pub fn note_work_exceeded() {
+    WORK_EXCEEDED.store(true, Ordering::Relaxed);
+}
+
 pub fn reset_for_tests() {
     VERBOSE.store(false, Ordering::Relaxed);
     WORLD_CLONES.store(0, Ordering::Relaxed);
@@ -104,6 +130,7 @@ pub fn reset_for_tests() {
     PEAK_RSS_BYTES.store(0, Ordering::Relaxed);
     BUDGET_BYTES.store(0, Ordering::Relaxed);
     BUDGET_EXCEEDED.store(false, Ordering::Relaxed);
+    WORK_EXCEEDED.store(false, Ordering::Relaxed);
 }
 
 pub fn rss_bytes() -> Option<usize> {

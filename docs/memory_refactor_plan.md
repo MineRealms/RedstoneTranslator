@@ -126,13 +126,27 @@ The route search state keeps its `world` field, but the field is now cheap to
 clone and shares unchanged layers, so the separate delta refactor is no longer
 required. Revisit only if routing frontiers still dominate after Commit 5.
 
-### [ ] Commit 5 — perf(local): deterministic work budget and frontier cap
+### [x] Commit 5 — perf(local): deterministic work budget and frontier cap
 
-Scope: explicit caps (queue length, sampled states, total work) with a
-documented truncation policy; graceful failure when exceeded.
+Scope: a per-step frontier cap (default 16,384 entries, distributed across the
+input frontier) plus a deterministic work limit (10M `World3D` clones / 2M
+placement generations per local search), both overridable with
+`MCHDL_FRONTIER_CAP` and `MCHDL_LOCAL_CLONE_LIMIT`. Large frontiers run the
+step sequentially so the cap can stop expansion early; small frontiers keep the
+parallel path. Exceeding a limit reports a clear error instead of aborting.
 
-Acceptance: `fsm_1bit` finishes or fails with a clear budget error; the behavior
-change is documented in `roadmap.md` and benchmarked.
+Files: `local_placer/mod.rs`, `perf.rs`, `candidate.rs`.
+
+Acceptance met: `full_adder` and `fsm_1bit` fail gracefully in about 66 s with
+`local candidate generation ... exceeded its work limit` and peak RSS around
+250 MiB; no OOM abort. Non-heavy suite green (362 tests).
+
+Key finding: a wide-limit control run (`MCHDL_LOCAL_CLONE_LIMIT=60000000`,
+`MCHDL_FRONTIER_CAP=131072`, 16 GB budget) still produced zero candidates for
+the 13-node `state_next` cone after 429 s / 60M clones at only 2.4 GB RSS. The
+legacy local placer cannot realize these dense cones; the limits bound the
+damage, they are not the cause. The real fix is replacing the leaf realizer
+(verified macro library for repeated shapes plus the placement-first path).
 
 ### [ ] Commit 6 — perf: verified macro library via fingerprints
 

@@ -220,6 +220,13 @@ fn generate_unit_candidates(
     if crate::perf::budget_exceeded() {
         eyre::bail!("memory budget exceeded during local candidate generation for `{module_name}`");
     }
+    if crate::perf::work_exceeded() {
+        eyre::bail!(
+            "local candidate generation for `{module_name}` exceeded its work limit (clone budget {} / placement budget {}); the design is too dense for the current local placer",
+            crate::perf::local_clone_limit(),
+            crate::perf::LOCAL_WORK_LIMIT
+        );
+    }
 
     let contains_sequential = graph
         .graph

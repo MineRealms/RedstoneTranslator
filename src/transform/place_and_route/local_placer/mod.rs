@@ -53,6 +53,8 @@ pub struct LocalPlacer {
     config: LocalPlacerConfig,
     visit_orders: Vec<GraphNodeId>,
     cost_join_pairs_by_step: Vec<Vec<FutureJoinPair>>,
+    generations: std::sync::atomic::AtomicUsize,
+    clone_baseline: std::sync::atomic::AtomicUsize,
 }
 
 type PlacerQueue = Vec<(World3D, PlacementState)>;
@@ -60,6 +62,20 @@ type PlacerQueue = Vec<(World3D, PlacementState)>;
 const STEP_SAMPLE_SCOPE: u64 = 1;
 const RANKED_RANDOM_TAIL_SAMPLE_SCOPE: u64 = 2;
 const LEAK_SAMPLING_QUEUE_THRESHOLD: usize = 10_000;
+/// Upper bound on the entries a single placement step may produce. The sampler
+/// runs afterwards, but a single step can otherwise expand a small frontier
+/// into millions of entries before it gets the chance.
+const FRONTIER_CAP: usize = 16_384;
+
+fn frontier_cap() -> usize {
+    std::env::var("MCHDL_FRONTIER_CAP")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(FRONTIER_CAP)
+}
+/// Above this input frontier the step runs sequentially so the cap can stop
+/// expansion early instead of materializing every child first.
+const PARALLEL_STEP_QUEUE_LIMIT: usize = 64;
 const PLACEMENT_DIVERSITY_SPAN_BUCKET_SIZE: usize = 4;
 const RANKED_DIVERSITY_SLOT_DIVISOR: usize = 4;
 const LOCAL_DENSITY_COST_WEIGHT: usize = 3;
@@ -74,6 +90,8 @@ impl LocalPlacer {
             config,
             visit_orders,
             cost_join_pairs_by_step,
+            generations: std::sync::atomic::AtomicUsize::new(0),
+            clone_baseline: std::sync::atomic::AtomicUsize::new(0),
         };
         result.verify()?;
         Ok(result)
@@ -306,6 +324,10 @@ impl LocalPlacer {
         progress_label: Option<&str>,
     ) -> PlacerQueue {
         let started = Instant::now();
+        self.clone_baseline.store(
+            crate::perf::world_clone_count(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let progress = local_placer_progress_label(progress_label);
         tracing::info!(
             target: "redstone_compiler::local_placer",
@@ -387,25 +409,61 @@ impl LocalPlacer {
             .unwrap_or_default();
         let input_queue_len = queue.len();
 
-        let generated = queue
-            .into_par_iter()
-            .panic_fuse()
-            .progress_with_style(progress_style(step + 1, self.visit_orders.len()))
-            .map(|(world, state)| {
-                let generation =
-                    self.generate_place_and_route(node, world, &state, input_constraints);
-                (generation.items, generation.route_debug)
-            })
-            .collect::<Vec<_>>();
-
         let mut next_queue = Vec::new();
         let mut route_debug = RouteDebug::default();
         let mut has_route_debug = false;
-        for (items, debug) in generated {
-            next_queue.extend(items);
-            if let Some(route) = debug {
-                has_route_debug = true;
-                route_debug.merge(route);
+        let use_parallel = queue.len() <= PARALLEL_STEP_QUEUE_LIMIT
+            && crate::perf::budget_bytes() == 0
+            && !crate::perf::rss_over_budget();
+        if use_parallel {
+            let generated = queue
+                .into_par_iter()
+                .panic_fuse()
+                .progress_with_style(progress_style(step + 1, self.visit_orders.len()))
+                .map(|(world, state)| {
+                    let generation =
+                        self.generate_place_and_route(node, world, &state, input_constraints);
+                    (generation.items, generation.route_debug)
+                })
+                .collect::<Vec<_>>();
+
+            for (items, debug) in generated {
+                next_queue.extend(items);
+                if let Some(route) = debug {
+                    has_route_debug = true;
+                    route_debug.merge(route);
+                }
+            }
+        } else {
+            let per_entry_cap = (frontier_cap() / queue.len().max(1)).max(1);
+            for (world, state) in queue {
+                if crate::perf::rss_over_budget() {
+                    crate::perf::note_budget_exceeded();
+                    break;
+                }
+                let clones = crate::perf::world_clone_count().saturating_sub(
+                    self.clone_baseline
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                );
+                if clones >= crate::perf::local_clone_limit()
+                    || self.generations.load(std::sync::atomic::Ordering::Relaxed)
+                        >= crate::perf::LOCAL_WORK_LIMIT
+                {
+                    crate::perf::note_work_exceeded();
+                    break;
+                }
+                self.generations
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let mut generation =
+                    self.generate_place_and_route(node, world, &state, input_constraints);
+                if generation.items.len() > per_entry_cap {
+                    generation.items.truncate(per_entry_cap);
+                }
+                next_queue.extend(generation.items);
+                if let Some(route) = generation.route_debug {
+                    has_route_debug = true;
+                    route_debug.merge(route);
+                }
             }
         }
 
