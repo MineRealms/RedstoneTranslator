@@ -1800,6 +1800,17 @@ fn search_layout_combinations(
             combination_index + 1,
             placement_attempts.len()
         ));
+        if std::env::var_os("MCHDL_DEBUG_PLACEMENT").is_some() {
+            for (attempt, placed) in placement_attempts.iter().enumerate() {
+                eprintln!("[placement] combination {combination_index} attempt {attempt}:");
+                for module in placed {
+                    eprintln!(
+                        "[placement]   {} origin={:?} bbox={:?}",
+                        module.module_name, module.origin, module.bbox
+                    );
+                }
+            }
+        }
         match route_first_successful_placement(
             topology,
             &candidates,

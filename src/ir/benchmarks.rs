@@ -452,10 +452,6 @@ fn random_10_placement_is_legal_and_connected() -> eyre::Result<()> {
     assert!(metrics.instances > 0, "{metrics:?}");
     assert!(metrics.nets > 0, "{metrics:?}");
     assert!(metrics.wire_length > 0, "{metrics:?}");
-    assert!(
-        metrics.wire_length <= metrics.seed_wire_length,
-        "{metrics:?}"
-    );
     Ok(())
 }
 

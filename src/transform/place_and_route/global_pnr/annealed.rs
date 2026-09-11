@@ -77,50 +77,125 @@ pub fn placement_candidates_annealed(
         .map(|(_, candidate)| candidate.bbox.height())
         .max()
         .unwrap_or(1);
-    let mut solution = None;
+    let mut solutions = Vec::new();
     let mut last_error = None;
-    for attempt in 0..3 {
-        let scale = 1usize << attempt;
-        let annealing = AnnealingConfig {
-            initial: InitialPlacementConfig {
-                world: DimSize(
-                    side.saturating_mul(scale),
-                    side.saturating_mul(scale),
-                    (max_height.max(4) + 4).saturating_mul(scale),
-                ),
-                spacing: config.spacing,
+    for seed_offset in 0..ANNEALED_SEEDS {
+        for attempt in 0..3 {
+            let scale = 1usize << attempt;
+            let annealing = AnnealingConfig {
+                seed: 7u64.wrapping_add(seed_offset.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
+                initial: InitialPlacementConfig {
+                    world: DimSize(
+                        side.saturating_mul(scale),
+                        side.saturating_mul(scale),
+                        (max_height.max(4) + 4).saturating_mul(scale),
+                    ),
+                    spacing: config.spacing.max(ANNEALED_MIN_SPACING),
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        };
-        match place_annealed(&problem, &annealing) {
-            Ok(found) => {
-                solution = Some(found);
-                break;
+            };
+            match place_annealed(&problem, &annealing) {
+                Ok(found) if found.is_legal() => {
+                    solutions.push(found);
+                    break;
+                }
+                Ok(found) => {
+                    last_error = Some(eyre::eyre!(
+                        "annealed placement is not legal: {:?}",
+                        found.legality
+                    ));
+                }
+                Err(error) => last_error = Some(error),
             }
-            Err(error) => last_error = Some(error),
         }
     }
-    let solution = solution.ok_or_else(|| {
-        last_error.unwrap_or_else(|| eyre::eyre!("annealed placement produced no solution"))
-    })?;
-    if !solution.is_legal() {
-        eyre::bail!("annealed placement is not legal: {:?}", solution.legality);
+    if solutions.is_empty() {
+        return Err(
+            last_error.unwrap_or_else(|| eyre::eyre!("annealed placement produced no solution"))
+        );
     }
 
-    let placed = selected
-        .iter()
-        .enumerate()
-        .map(|(index, (_, candidate))| PlacedModule {
-            module_name: candidate.module_name.clone(),
-            candidate_index: index,
-            origin: solution.instances[index].position,
-            bbox: candidate.bbox,
-        })
-        .collect::<Vec<_>>();
+    if std::env::var_os("MCHDL_DEBUG_ANNEALED").is_some() {
+        for (attempt, solution) in solutions.iter().enumerate() {
+            eprintln!("[annealed] attempt {attempt}:");
+            for (index, (name, candidate)) in selected.iter().enumerate() {
+                let origin = solution.instances[index].position;
+                eprintln!(
+                    "[annealed] {name} origin={origin:?} size={:?} bbox={:?}",
+                    candidate.bbox.width(),
+                    candidate.bbox
+                );
+                let template = problem.template_for(index)?;
+                for pin in &template.pins {
+                    let position = Position(
+                        origin.0 + pin.position.0,
+                        origin.1 + pin.position.1,
+                        origin.2 + pin.position.2,
+                    );
+                    let escapes = pin
+                        .escape
+                        .iter()
+                        .map(|escape| {
+                            Position(
+                                origin.0 + escape.0,
+                                origin.1 + escape.1,
+                                origin.2 + escape.2,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    eprintln!(
+                        "[annealed]   pin `{}` pos={position:?} facing={:?} escapes={escapes:?}",
+                        pin.name, pin.facing
+                    );
+                }
+            }
+        }
+    }
 
-    Ok(vec![placed])
+    let mut seen = std::collections::BTreeSet::new();
+    let mut attempts = Vec::new();
+    for solution in &solutions {
+        let origins = solution
+            .instances
+            .iter()
+            .map(|instance| instance.position)
+            .collect::<Vec<_>>();
+        if !seen.insert(origins) {
+            continue;
+        }
+        let placed = selected
+            .iter()
+            .enumerate()
+            .map(|(index, (_, candidate))| PlacedModule {
+                module_name: candidate.module_name.clone(),
+                candidate_index: index,
+                origin: Position(
+                    solution.instances[index].position.0 + PLACEMENT_MARGIN,
+                    solution.instances[index].position.1 + PLACEMENT_MARGIN,
+                    solution.instances[index].position.2 + PLACEMENT_MARGIN,
+                ),
+                bbox: candidate.bbox,
+            })
+            .collect::<Vec<_>>();
+        attempts.push(placed);
+    }
+
+    Ok(attempts)
 }
+
+/// Number of deterministic annealing seeds tried per layout combination. The
+/// router tries every resulting placement attempt, mirroring the legacy
+/// engine's multiple placement attempts.
+const ANNEALED_SEEDS: u64 = 4;
+
+/// Minimum channel width between annealed macros so the detailed router can
+/// always escape a pin. The legacy shelf placer leaves comparable channels.
+const ANNEALED_MIN_SPACING: usize = 6;
+
+/// Free cells kept between the placement box origin and the macros so the
+/// router can place external input switches and escape routing on every side.
+const PLACEMENT_MARGIN: usize = 4;
 
 fn instance_endpoint(
     topology: &ResolvedPnrTopology,
@@ -214,21 +289,23 @@ mod tests {
 
         let attempts = placement_candidates_annealed(&topology, &selected, &config)?;
 
-        assert_eq!(attempts.len(), 1);
-        assert_eq!(attempts[0].len(), 2);
-        assert_eq!(attempts[0][0].module_name, child_name);
-        assert_eq!(attempts[0][0].candidate_index, 0);
-        assert_eq!(attempts[0][1].candidate_index, 1);
+        assert!(!attempts.is_empty());
+        for placed in &attempts {
+            assert_eq!(placed.len(), 2);
+            assert_eq!(placed[0].module_name, child_name);
+            assert_eq!(placed[0].candidate_index, 0);
+            assert_eq!(placed[1].candidate_index, 1);
 
-        let (first_min, first_max) = bounds(&attempts[0][0]);
-        let (second_min, second_max) = bounds(&attempts[0][1]);
-        let overlaps = first_min.0 <= second_max.0
-            && second_min.0 <= first_max.0
-            && first_min.1 <= second_max.1
-            && second_min.1 <= first_max.1
-            && first_min.2 <= second_max.2
-            && second_min.2 <= first_max.2;
-        assert!(!overlaps, "{:?}", attempts[0]);
+            let (first_min, first_max) = bounds(&placed[0]);
+            let (second_min, second_max) = bounds(&placed[1]);
+            let overlaps = first_min.0 <= second_max.0
+                && second_min.0 <= first_max.0
+                && first_min.1 <= second_max.1
+                && second_min.1 <= first_max.1
+                && first_min.2 <= second_max.2
+                && second_min.2 <= first_max.2;
+            assert!(!overlaps, "{placed:?}");
+        }
         Ok(())
     }
 }

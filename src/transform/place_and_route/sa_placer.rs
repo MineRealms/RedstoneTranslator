@@ -402,6 +402,10 @@ pub struct PlacementCostModel {
     pub bounding_box_weight: f64,
     pub blocked_pin_weight: f64,
     pub overlap_weight: f64,
+    pub spacing_weight: f64,
+    pub pin_access_weight: f64,
+    /// Minimum free gap between macro footprints, in blocks.
+    pub spacing: usize,
 }
 
 impl Default for PlacementCostModel {
@@ -411,6 +415,9 @@ impl Default for PlacementCostModel {
             bounding_box_weight: 0.1,
             blocked_pin_weight: 50.0,
             overlap_weight: 100.0,
+            spacing_weight: 20.0,
+            pin_access_weight: 30.0,
+            spacing: 2,
         }
     }
 }
@@ -421,6 +428,8 @@ pub struct PlacementCost {
     pub bounding_box_volume: usize,
     pub blocked_pins: usize,
     pub overlapping_pairs: usize,
+    pub spacing_violations: usize,
+    pub pin_access_violations: usize,
     pub total: f64,
 }
 
@@ -466,7 +475,11 @@ pub fn place_annealed(
     let mut best_overall: Option<(Vec<MacroInstance>, PlacementCost)> = None;
 
     let mut current = initial.instances.clone();
-    let mut current_cost = placement_cost(problem, &current, &config.cost, world)?;
+    let model = PlacementCostModel {
+        spacing: config.initial.spacing,
+        ..config.cost
+    };
+    let mut current_cost = placement_cost(problem, &current, &model, world)?;
     record_best(&current, current_cost, &mut best_legal, &mut best_overall);
 
     for restart in 0..config.restarts.max(1) {
@@ -482,7 +495,7 @@ pub fn place_annealed(
             }
             for _ in 0..config.moves_per_temperature {
                 let candidate = propose_move(problem, &current, &mut rng, config)?;
-                let candidate_cost = placement_cost(problem, &candidate, &config.cost, world)?;
+                let candidate_cost = placement_cost(problem, &candidate, &model, world)?;
                 let delta = candidate_cost.total - current_cost.total;
                 if delta <= 0.0 || rng.next_f64() < (-delta / temperature).exp() {
                     current = candidate;
@@ -553,17 +566,122 @@ pub fn placement_cost(
         .unwrap_or(0);
     let blocked_pins = blocked_pin_count(problem, instances, world)?;
     let overlapping_pairs = placed.overlaps().len();
+    let spacing_violations = spacing_violation_count(problem, instances, model.spacing)?;
+    let pin_access_violations = pin_access_violation_count(problem, instances, world)?;
     let total = model.wire_length_weight * wire_length as f64
         + model.bounding_box_weight * bounding_box_volume as f64
         + model.blocked_pin_weight * blocked_pins as f64
-        + model.overlap_weight * overlapping_pairs as f64;
+        + model.overlap_weight * overlapping_pairs as f64
+        + model.spacing_weight * spacing_violations as f64
+        + model.pin_access_weight * pin_access_violations as f64;
     Ok(PlacementCost {
         wire_length,
         bounding_box_volume,
         blocked_pins,
         overlapping_pairs,
+        spacing_violations,
+        pin_access_violations,
         total,
     })
+}
+
+fn instance_aabb(
+    problem: &PlacementProblem,
+    instance: &MacroInstance,
+) -> eyre::Result<(Position, Position)> {
+    let size = problem.template_for(instance.id)?.size;
+    Ok((
+        instance.position,
+        Position(
+            instance.position.0 + size.0.saturating_sub(1),
+            instance.position.1 + size.1.saturating_sub(1),
+            instance.position.2 + size.2.saturating_sub(1),
+        ),
+    ))
+}
+
+fn axis_gap(first: (Position, Position), second: (Position, Position)) -> usize {
+    let gap = |min_a: usize, max_a: usize, min_b: usize, max_b: usize| {
+        if max_a < min_b {
+            min_b - max_a - 1
+        } else if max_b < min_a {
+            min_a - max_b - 1
+        } else {
+            0
+        }
+    };
+    gap(first.0 .0, first.1 .0, second.0 .0, second.1 .0)
+        + gap(first.0 .1, first.1 .1, second.0 .1, second.1 .1)
+        + gap(first.0 .2, first.1 .2, second.0 .2, second.1 .2)
+}
+
+fn spacing_violation_count(
+    problem: &PlacementProblem,
+    instances: &[MacroInstance],
+    required: usize,
+) -> eyre::Result<usize> {
+    if required == 0 {
+        return Ok(0);
+    }
+    let bounds = instances
+        .iter()
+        .map(|instance| instance_aabb(problem, instance))
+        .collect::<eyre::Result<Vec<_>>>()?;
+    let mut violations = 0usize;
+    for first in 0..bounds.len() {
+        for second in (first + 1)..bounds.len() {
+            let first_halo = problem.template_for(instances[first].id)?.halo;
+            let second_halo = problem.template_for(instances[second].id)?.halo;
+            let required = required.max(first_halo).max(second_halo);
+            if axis_gap(bounds[first], bounds[second]) < required {
+                violations += 1;
+            }
+        }
+    }
+    Ok(violations)
+}
+
+fn pin_access_violation_count(
+    problem: &PlacementProblem,
+    instances: &[MacroInstance],
+    world: DimSize,
+) -> eyre::Result<usize> {
+    let bounds = instances
+        .iter()
+        .map(|instance| instance_aabb(problem, instance))
+        .collect::<eyre::Result<Vec<_>>>()?;
+    let mut violations = 0usize;
+    for (index, instance) in instances.iter().enumerate() {
+        let template = problem.template_for(instance.id)?;
+        for pin in &template.pins {
+            if pin.escape.is_empty() {
+                continue;
+            }
+            let any_free = pin.escape.iter().any(|local| {
+                let position = Position(
+                    instance.position.0 + local.0,
+                    instance.position.1 + local.1,
+                    instance.position.2 + local.2,
+                );
+                if !world.bound_on(position) {
+                    return false;
+                }
+                bounds.iter().enumerate().all(|(other, (min, max))| {
+                    other == index
+                        || position.0 < min.0
+                        || position.0 > max.0
+                        || position.1 < min.1
+                        || position.1 > max.1
+                        || position.2 < min.2
+                        || position.2 > max.2
+                })
+            });
+            if !any_free {
+                violations += 1;
+            }
+        }
+    }
+    Ok(violations)
 }
 
 fn blocked_pin_count(

@@ -829,6 +829,23 @@ fn route_top_input_ports(
 
         let input_sources = external_input_sources(route_world, input_index, &sinks);
         if input_sources.is_empty() {
+            if std::env::var_os("MCHDL_DEBUG_INPUT_SWITCH").is_some() {
+                let max_x = route_world
+                    .iter_block()
+                    .into_iter()
+                    .map(|(position, _)| position.0)
+                    .max()
+                    .unwrap_or(0);
+                eprintln!(
+                    "[input-switch] port={} index={} world={:?} occupied={:?} fallback={:?} sinks={:?}",
+                    port.name,
+                    input_index,
+                    route_world.size,
+                    occupied_bounds(route_world),
+                    Position(max_x + 2, input_index * 3 + 1, 1),
+                    sinks
+                );
+            }
             return Err(eyre::eyre!(
                 "failed to place top-level input switch `{}`",
                 port.name
@@ -1863,15 +1880,26 @@ fn external_input_candidate_cost(
 }
 
 fn build_external_input_source(world: &World3D, switch: Position) -> Option<ExternalInputSource> {
+    let debug = std::env::var_os("MCHDL_DEBUG_INPUT_SWITCH").is_some();
     let switch_block = input_switch_block();
     let route_source = switch.walk(switch_block.direction)?;
     let route_source_support = route_source.down()?;
     if !world.size.bound_on(switch)
         || !world.size.bound_on(route_source)
         || !world.size.bound_on(route_source_support)
-        || !world[switch].kind.is_air()
-        || !world[route_source].kind.is_air()
     {
+        if debug {
+            eprintln!("[input-src] {switch:?} rejected: out of bounds");
+        }
+        return None;
+    }
+    if !world[switch].kind.is_air() || !world[route_source].kind.is_air() {
+        if debug {
+            eprintln!(
+                "[input-src] {switch:?} rejected: occupied switch={:?} source={:?}",
+                world[switch].kind, world[route_source].kind
+            );
+        }
         return None;
     }
 
@@ -1880,11 +1908,33 @@ fn build_external_input_source(world: &World3D, switch: Position) -> Option<Exte
     place_support_cobble_if_needed(&mut source_world, route_source_support)?;
 
     let redstone_node = PlacedNode::new_redstone(route_source);
+    if debug {
+        for bound in redstone_node.propagation_bound(Some(&source_world)) {
+            if !bound.is_bound_on(&source_world) || bound.position() == switch {
+                continue;
+            }
+            let propagated = bound.propagate_to(&source_world);
+            if !propagated.is_empty() {
+                eprintln!(
+                    "[input-src] {switch:?} bound pos={:?} type={:?} dir={:?} -> {propagated:?}",
+                    bound.position(),
+                    bound.propagation_type(),
+                    bound.direction()
+                );
+            }
+        }
+    }
     if redstone_node.has_conflict(&source_world, &[switch].into_iter().collect()) {
+        if debug {
+            eprintln!("[input-src] {switch:?} rejected: redstone conflict");
+        }
         return None;
     }
     detailed_router::place_node(&mut source_world, redstone_node);
     if !detailed_router::target_powers_position(&source_world, switch, route_source) {
+        if debug {
+            eprintln!("[input-src] {switch:?} rejected: switch does not power source");
+        }
         return None;
     }
 
