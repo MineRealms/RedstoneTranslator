@@ -153,7 +153,7 @@ impl Default for UnitCandidateConfig {
             local_config: LocalPlacerConfig::default(),
             input_constraints: LocalPlacerInputConstraints::default(),
             max_candidates: 16,
-            combinational_sampling_limit: None,
+            combinational_sampling_limit: Some(32),
         }
     }
 }
@@ -276,10 +276,25 @@ fn candidate_ports_cover_module_ports(expected: &[CandidatePort], actual: &[Phys
         .all(|expected| actual.iter().any(|port| port.name == expected.name))
 }
 
+fn truth_debug_enabled() -> bool {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    static FLAG: AtomicU8 = AtomicU8::new(0);
+    match FLAG.load(Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => {
+            let enabled = std::env::var_os("MCHDL_DEBUG_TRUTH_TABLE").is_some();
+            FLAG.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
+            enabled
+        }
+    }
+}
+
 fn candidate_matches_truth_table(
     expected: &LogicGraph,
     placed: &PlacedWorld,
 ) -> eyre::Result<bool> {
+    let graph = expected;
     let expected = expected.truth_table()?;
     let inputs = expected
         .input_names
@@ -306,8 +321,55 @@ fn candidate_matches_truth_table(
         })
         .collect::<eyre::Result<Vec<_>>>()?;
     let world = World::from(&placed.world);
+    let debug_truth = truth_debug_enabled();
+    let mask_count = 1usize << inputs.len();
+    static TRUTH_DEBUG_PRINTED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    let verbose_table =
+        debug_truth && !TRUTH_DEBUG_PRINTED.swap(true, std::sync::atomic::Ordering::Relaxed);
+    if verbose_table {
+        eprintln!("[truth] input_names={:?}", expected.input_names);
+        for (name, position) in &outputs {
+            eprintln!("[truth] output `{name}` pos={position:?}");
+        }
+        for (name, table) in &expected.output_tables {
+            eprintln!("[truth] expected `{name}` = {table:?}");
+        }
+        for node in &graph.graph.nodes {
+            eprintln!(
+                "[truth] node {:?} kind={:?} inputs={:?}",
+                node.id, node.kind, node.inputs
+            );
+        }
+    }
+    let print_mismatch = |stage: &str, mask: usize, previous: Option<usize>, world: &World3D| {
+        if !debug_truth {
+            return;
+        }
+        eprintln!(
+            "[truth] stage={stage} mask={mask:0width$b}/{mask_count} previous={previous:?}",
+            width = inputs.len()
+        );
+        for (index, position) in inputs.iter().enumerate() {
+            eprintln!(
+                "[truth]   input[{index}] pos={position:?} level={}",
+                (mask & (1 << index)) != 0
+            );
+        }
+        for (name, position) in &outputs {
+            let expected_value = expected
+                .output_tables
+                .get(*name)
+                .and_then(|table| table.get(mask))
+                .copied();
+            eprintln!(
+                "[truth]   output `{name}` pos={position:?} expected={expected_value:?} actual={}",
+                world[*position].kind.is_powered()
+            );
+        }
+    };
 
-    for mask in 0..(1usize << inputs.len()) {
+    for mask in 0..mask_count {
         let mut sim = Simulator::from_with_limits_and_trace(&world, 256, 50_000, 0)
             .map_err(|error| eyre::eyre!(error.message().to_owned()))?;
         sim.change_state_with_limits(
@@ -324,7 +386,16 @@ fn candidate_matches_truth_table(
             let Some(expected_output) = expected.output_tables.get(*output_name) else {
                 return Ok(false);
             };
-            if sim.world()[*output_position].kind.is_powered() != expected_output[mask] {
+            let actual = sim.world()[*output_position].kind.is_powered();
+            if verbose_table {
+                eprintln!(
+                    "[truth] fresh mask={mask:0width$b} `{output_name}` expected={} actual={actual}",
+                    expected_output[mask],
+                    width = inputs.len()
+                );
+            }
+            if actual != expected_output[mask] {
+                print_mismatch("fresh", mask, None, sim.world());
                 return Ok(false);
             }
         }
@@ -337,7 +408,7 @@ fn candidate_matches_truth_table(
     // fails to release after an input transition.
     let mut sim = Simulator::from_with_limits_and_trace(&world, 256, 50_000, 0)
         .map_err(|error| eyre::eyre!(error.message().to_owned()))?;
-    let mask_count = 1usize << inputs.len();
+    let mut previous_mask: Option<usize> = None;
     for mask in (0..mask_count).chain((0..mask_count).rev()) {
         sim.change_state_with_limits(
             inputs
@@ -353,10 +424,12 @@ fn candidate_matches_truth_table(
                 return Ok(false);
             };
             if sim.world()[*output_position].kind.is_powered() != expected_output[mask] {
+                print_mismatch("transition", mask, previous_mask, sim.world());
                 return Ok(false);
             }
         }
         sim.advance_idle_cycles(crate::world::simulator::MANUAL_INPUT_IDLE_CYCLES)?;
+        previous_mask = Some(mask);
     }
 
     Ok(true)

@@ -39,4 +39,7 @@ Full-flow PnR benchmark tests (`benchmark_pnr_baseline`, `benchmark_placement_en
 `MCHDL_PERF=1` prints per-stage world-clone counts, cloned bytes, and RSS, plus
 a final summary. `--memory-budget-mb <N>` turns the budget into a clear error
 instead of an OOM abort. The counters are always active (two relaxed atomic
-adds per `World3D` clone).
+adds per `World3D` clone). `MCHDL_DEBUG_TRUTH_TABLE=1` prints the first
+candidate truth-table mismatch (mask, input/output positions, expected vs
+actual) and dumps the leaf graph once per process; `--placement-engine
+legacy|annealed` selects the global placement engine.
