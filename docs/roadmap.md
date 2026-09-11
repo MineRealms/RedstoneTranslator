@@ -205,8 +205,10 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M0.7 | Annealed routability: spacing/pin-access costs, 4-cell margin, 6-cell channels, multi-seed attempts; composite `andnot` chain routes in 4.7 s / 49 MiB vs Legacy 16.6 s / 73 MiB | 362 non-heavy tests |
 | CAD-M0.8 | `state_next` truth-rejection reproducer and bisect: minimal failing subgraph is `Not(Not(state))`; failure matches a lost inversion | 362 non-heavy tests |
 | CAD-M0.9 | Physical-connectivity trace (`MCHDL_DEBUG_CONNECTIVITY`): per-candidate endpoint map, signal footprints, and block dump; reproducer labels each variant | 362 non-heavy tests |
-| CAD-M0.10a | PECA report-only: shared `world/electrical.rs` rules, pin/terminal provenance from the local placer, component extraction, `Single`/`Merge`/`Passive` contracts; mechanically confirms `node=20 ExtraDriver drivers=[(5, state switch)]` on all 32 `tail_n20` candidates; 368 non-heavy tests | 368 non-heavy tests |
-| CAD-M0.10b | PECA enforce: reject violating candidates. Blocked on the OR-tap `Merge` reachability false positive | in progress |
+| CAD-M0.10a | PECA report-only: shared `world/electrical.rs` rules, pin/terminal provenance from the local placer, component extraction, `Single`/`Merge`/`Passive` contracts; mechanically confirms `node=20 ExtraDriver drivers=[(5, state switch)]` on all 32 `tail_n20` candidates | 368 non-heavy tests |
+| CAD-M0.10a.1 | Merge semantics: observed driver set at the OR tap plus the one-hop terminal -> cobble -> dust relay; `MissingBranch` false positives eliminated (0 remaining in the reproducer) | 372 non-heavy tests |
+| CAD-M0.10a.2 | Confidence model: `Single` violations are `Certain`, `Merge` violations are `SimulationRequired`; only `Certain` will be enforced | 372 non-heavy tests |
+| CAD-M0.10b | PECA enforce `Single` only (hard exclusivity); `Merge` stays report-only | planned |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

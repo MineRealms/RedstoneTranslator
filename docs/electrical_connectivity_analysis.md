@@ -74,32 +74,46 @@ enum PinContract {
 ```
 
 - `Single(n)` — a NOT/repeater/latch input pin: every possible driver must
-  belong to the same electrical unit as `n`'s anchor (its terminal, or the
-  redstone component driven by it). This is the exclusivity check.
-- `Merge(a, b)` — an OR tap: the tap's redstone component must have exactly
-  `{a, b}` as its driving nets (both branches reach, no foreign net).
+  belong to the same electrical unit as `n`'s anchor (its terminal, or a dust
+  component whose only driving net is `n`). This is the exclusivity check.
+- `Merge(a, b)` — an OR tap: the observed driver set at the tap must be
+  exactly `{a, b}` (both branches reach, no foreign net). A branch may reach
+  the tap through a cobble that a terminal powers (one relay hop), because the
+  simulator's cobble event handling propagates terminal power to adjacent
+  dust; dust never relays through a cobble.
 - `Passive` — sequential-macro internals are skipped in the first release.
 
-The judgment unit is the **electrical component** (redstone dust network plus
-its driving terminals), never a raw position, because fanout and wired-OR make
-multi-source components legal.
+The judgment unit is the **electrical component** (a dust network plus the
+terminals that drive it), never a raw position, because fanout and wired-OR
+make multi-source components legal.
 
-## 6. Driver confidence
+## 6. Confidence
 
-`Always` (redstone block), `Possible` (switch/torch/repeater/powered wire),
-`Never` (proven constant-off after DCE/constant propagation). The first
-release treats every driver as `Possible` and reports without rejecting.
+Two independent axes:
+
+- **Driver confidence** — `Always` (redstone block), `Possible`
+  (switch/torch/repeater/powered wire), `Never` (proven constant-off after
+  DCE/constant propagation). The first release treats every driver as
+  `Possible`.
+- **Violation confidence** — `Certain` when the violation follows directly
+  from the shared electrical rules (all `Single` violations), and
+  `SimulationRequired` when static analysis cannot decide (all `Merge`
+  violations). Enforcement only applies to `Certain` violations; `Merge`
+  stays report-only until a simulation fallback is added.
 
 ## 7. Rollout (report-first)
 
 1. **M0.10a** — report only: run PECA before truth-table validation, print
-   `[peca]` violations and count them (`candidate_drc_violations`). Metrics:
-   violation count, candidate survival rate, truth-reject delta, false-positive
-   audit against the truth table.
-2. **M0.10b** — enforce: reject violating candidates.
-3. **M0.11** — DCE of dead logic (separate concern; shrinks the `Never` set and
-   the search space).
-4. **M0.12** — generation-time rejection (support-position local check, OR tap
+   `[peca]` violations and count them (`candidate_drc_violations`).
+2. **M0.10a.1** — Merge semantics: observed driver set at the tap, with the
+   one-hop cobble relay; eliminates the `MissingBranch` false positives.
+3. **M0.10a.2** — confidence model: `Single` is `Certain`, `Merge` is
+   `SimulationRequired`.
+4. **M0.10b** — enforce `Single` only.
+5. **M0.10c** — enforce `Merge`, with the localized simulation fallback.
+6. **M0.11** — DCE of dead logic (separate concern; removes the dead-logic
+   coupling noise and shrinks the search space).
+7. **M0.12** — generation-time rejection (support-position local check, OR tap
    two-branch reach) so bad candidates are pruned early.
 
 ## 8. Regression cases
@@ -133,12 +147,20 @@ dead logic (removed later by DCE) and partly on live logic where the short
 does not flip the tested output. This is the intended value of the layer: the
 truth table is necessary but not sufficient.
 
-### 9.2 Known limitation: OR tap reachability false positives
+### 9.2 Merge semantics fixed (M0.10a.1/M0.10a.2)
 
-`Merge` reports `MissingBranch` on valid OR merges (for example `tail_n8`
-`node=17 MissingBranch(16)` although the candidate passes the truth table).
-The static component walk does not yet capture every path by which a branch
-can reach the tap (notably cobble-mediated hops). This must be fixed before
-M0.10b enforces violations, otherwise valid candidates would be rejected.
-`Single` checks are not affected by this gap and already match the confirmed
-root cause.
+The `MissingBranch` reports on valid OR merges were not a semantics problem
+but an incomplete electrical model: a branch can reach the tap through a
+cobble that a terminal powers (the simulator's cobble event handling
+propagates terminal power to adjacent dust), and the component walk did not
+include that hop. The fix models dust-only components plus a one-hop
+terminal -> cobble -> dust relay; dust never relays through a cobble (the
+simulator ignores redstone events on cobbles). After the fix the reproducer
+reports zero `MissingBranch` violations.
+
+Violations now carry confidence: `Single` is `Certain`, `Merge` is
+`SimulationRequired`. The remaining `tail_n8`/`tail_n19` violations are real
+couplings: dead-logic nets reaching live components (removed later by DCE)
+and live shorts whose extra driver is logically absorbed by the cone (the
+truth table passes, but the circuit is fragile). The confirmed `state_next`
+`Single` violation persists on all 32 `tail_n20` candidates.

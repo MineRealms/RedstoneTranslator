@@ -11,6 +11,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::graph::GraphNodeId;
+use crate::world::block::BlockKind;
 use crate::world::electrical;
 use crate::world::position::Position;
 use crate::world::World3D;
@@ -39,6 +40,16 @@ pub struct PlacedAnalysis {
     pub pins: Vec<PinRecord>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ConnectivityConfidence {
+    /// The violation follows directly from the shared electrical rules; safe to
+    /// enforce.
+    Certain,
+    /// Static analysis cannot decide; the candidate must be simulated before
+    /// the violation is enforced.
+    SimulationRequired,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ViolationReason {
     ExtraDriver,
@@ -52,9 +63,13 @@ pub struct Violation {
     pub position: Position,
     pub drivers: Vec<(GraphNodeId, Position)>,
     pub reason: ViolationReason,
+    pub confidence: ConnectivityConfidence,
 }
 
-fn redstone_components(
+/// Electrical components over redstone dust. Dust connects to dust; a cobble
+/// only relays terminal power one hop (see `terminal_nets_per_component`),
+/// because the simulator ignores redstone events on cobbles.
+fn electrical_components(
     world: &World3D,
 ) -> (
     HashMap<Position, usize>,
@@ -73,7 +88,7 @@ fn redstone_components(
         component_of.insert(pos, next_id);
         positions.insert(pos);
         while let Some(p) = stack.pop() {
-            let crate::world::block::BlockKind::Redstone { state, .. } = world[p].kind else {
+            let BlockKind::Redstone { state, .. } = world[p].kind else {
                 continue;
             };
             for target in electrical::redstone_propagate_targets(world, p, state) {
@@ -94,8 +109,10 @@ fn redstone_components(
     (component_of, component_positions)
 }
 
-/// For every redstone component, the set of logical nets whose driver terminal
-/// can power a redstone inside it.
+/// For every dust component, the set of logical nets whose driver terminal can
+/// power a redstone inside it. A terminal that powers a cobble relays its net
+/// one hop to the cobble's adjacent redstone (the simulator's cobble event
+/// handling); dust never relays through a cobble.
 fn terminal_nets_per_component(
     world: &World3D,
     component_of: &HashMap<Position, usize>,
@@ -108,9 +125,21 @@ fn terminal_nets_per_component(
             continue;
         }
         for (target, _) in electrical::power_targets(world, *pos) {
-            if world.size.bound_on(target) && world[target].kind.is_redstone() {
+            if !world.size.bound_on(target) {
+                continue;
+            }
+            let target_kind = world[target].kind;
+            if target_kind.is_redstone() {
                 if let Some(&cid) = component_of.get(&target) {
                     result.entry(cid).or_default().insert(*net);
+                }
+            } else if target_kind.is_cobble() {
+                for neighbor in target.forwards() {
+                    if world.size.bound_on(neighbor) && world[neighbor].kind.is_redstone() {
+                        if let Some(&cid) = component_of.get(&neighbor) {
+                            result.entry(cid).or_default().insert(*net);
+                        }
+                    }
                 }
             }
         }
@@ -145,7 +174,9 @@ fn allowed_driver_positions(
 
     allowed.insert(anchor_pos);
     for (cid, nets) in component_nets {
-        if nets.contains(&net) {
+        // A terminal net may only drive a component that carries exactly that
+        // net; a component shared with a foreign net is a short.
+        if nets.len() == 1 && nets.contains(&net) {
             if let Some(positions) = component_positions.get(cid) {
                 allowed.extend(positions.iter().copied());
             }
@@ -183,7 +214,7 @@ pub fn analyze(world: &World3D, analysis: &PlacedAnalysis) -> Vec<Violation> {
         position_to_net.entry(*pos).or_insert(*net);
     }
 
-    let (component_of, component_positions) = redstone_components(world);
+    let (component_of, component_positions) = electrical_components(world);
     let component_nets = terminal_nets_per_component(world, &component_of, &anchor);
 
     let mut violations = Vec::new();
@@ -216,6 +247,7 @@ pub fn analyze(world: &World3D, analysis: &PlacedAnalysis) -> Vec<Violation> {
                         position: pin.position,
                         drivers,
                         reason: ViolationReason::ExtraDriver,
+                        confidence: ConnectivityConfidence::Certain,
                     });
                 }
             }
@@ -228,6 +260,7 @@ pub fn analyze(world: &World3D, analysis: &PlacedAnalysis) -> Vec<Violation> {
                             position: pin.position,
                             drivers: Vec::new(),
                             reason: ViolationReason::MissingBranch(*missing),
+                            confidence: ConnectivityConfidence::SimulationRequired,
                         });
                     }
                     continue;
@@ -239,6 +272,7 @@ pub fn analyze(world: &World3D, analysis: &PlacedAnalysis) -> Vec<Violation> {
                         position: pin.position,
                         drivers: Vec::new(),
                         reason: ViolationReason::MissingBranch(*missing),
+                        confidence: ConnectivityConfidence::SimulationRequired,
                     });
                 }
                 for foreign in actual.difference(&expected) {
@@ -247,6 +281,7 @@ pub fn analyze(world: &World3D, analysis: &PlacedAnalysis) -> Vec<Violation> {
                         position: pin.position,
                         drivers: vec![(*foreign, pin.position)],
                         reason: ViolationReason::ForeignNet(*foreign),
+                        confidence: ConnectivityConfidence::SimulationRequired,
                     });
                 }
             }
@@ -254,7 +289,7 @@ pub fn analyze(world: &World3D, analysis: &PlacedAnalysis) -> Vec<Violation> {
         }
     }
 
-    violations.sort_by_key(|v| (v.node, v.position, v.reason.clone()));
+    violations.sort_by_key(|v| (v.node, v.position, v.reason.clone(), v.confidence));
     violations
 }
 
@@ -336,6 +371,7 @@ mod tests {
                 position: n20_support,
                 drivers: vec![(5, state)],
                 reason: ViolationReason::ExtraDriver,
+                confidence: ConnectivityConfidence::Certain,
             }]
         );
     }
@@ -412,6 +448,164 @@ mod tests {
                     contract: PinContract::Single { expected_net: 7 },
                 },
             ],
+        );
+
+        assert!(analyze(&w, &a).is_empty());
+    }
+
+    fn dust() -> Block {
+        Block {
+            kind: BlockKind::Redstone {
+                on_count: 0,
+                state: 0,
+                strength: 0,
+            },
+            direction: Direction::None,
+        }
+    }
+
+    /// The `tail_n8` shape: the tap dust is reached by the second branch
+    /// through a powered cobble (torch -> cobble -> dust). The cobble is a
+    /// conducting relay, so both branches are observed and the merge is clean.
+    #[test]
+    fn or_merge_reached_through_cobble_is_clean() {
+        let a_switch = Position(2, 4, 1);
+        let d1 = Position(2, 3, 1);
+        let d2 = Position(1, 3, 1);
+        let c = Position(1, 3, 0);
+        let b_torch = Position(0, 3, 0);
+
+        let w = world(vec![
+            (a_switch, switch(Direction::East)),
+            (d1, dust()),
+            (d2, dust()),
+            (c, cobble()),
+            (b_torch, torch(Direction::North)),
+        ]);
+
+        let a = analysis(
+            vec![(1, a_switch), (16, b_torch)],
+            vec![PinRecord {
+                node: 17,
+                position: d2,
+                contract: PinContract::Merge {
+                    input_nets: vec![1, 16],
+                },
+            }],
+        );
+
+        assert!(analyze(&w, &a).is_empty());
+    }
+
+    /// The same shape without the second branch must report the missing input
+    /// with `SimulationRequired` confidence (report-only, not enforced).
+    #[test]
+    fn or_merge_missing_branch_is_reported() {
+        let a_switch = Position(2, 4, 1);
+        let d1 = Position(2, 3, 1);
+        let d2 = Position(1, 3, 1);
+        let c = Position(1, 3, 0);
+
+        let w = world(vec![
+            (a_switch, switch(Direction::East)),
+            (d1, dust()),
+            (d2, dust()),
+            (c, cobble()),
+        ]);
+
+        let a = analysis(
+            vec![(1, a_switch)],
+            vec![PinRecord {
+                node: 17,
+                position: d2,
+                contract: PinContract::Merge {
+                    input_nets: vec![1, 16],
+                },
+            }],
+        );
+
+        assert_eq!(
+            analyze(&w, &a),
+            vec![Violation {
+                node: 17,
+                position: d2,
+                drivers: Vec::new(),
+                reason: ViolationReason::MissingBranch(16),
+                confidence: ConnectivityConfidence::SimulationRequired,
+            }]
+        );
+    }
+
+    /// A foreign source joining the merge zone must be reported.
+    #[test]
+    fn or_merge_foreign_driver_is_reported() {
+        let a_switch = Position(2, 4, 1);
+        let d1 = Position(2, 3, 1);
+        let d2 = Position(1, 3, 1);
+        let c = Position(1, 3, 0);
+        let b_torch = Position(0, 3, 0);
+        let foreign = Position(1, 2, 1);
+
+        let w = world(vec![
+            (a_switch, switch(Direction::East)),
+            (d1, dust()),
+            (d2, dust()),
+            (c, cobble()),
+            (b_torch, torch(Direction::North)),
+            (foreign, switch(Direction::East)),
+        ]);
+
+        let a = analysis(
+            vec![(1, a_switch), (16, b_torch), (99, foreign)],
+            vec![PinRecord {
+                node: 17,
+                position: d2,
+                contract: PinContract::Merge {
+                    input_nets: vec![1, 16],
+                },
+            }],
+        );
+
+        assert_eq!(
+            analyze(&w, &a),
+            vec![Violation {
+                node: 17,
+                position: d2,
+                drivers: vec![(99, d2)],
+                reason: ViolationReason::ForeignNet(99),
+                confidence: ConnectivityConfidence::SimulationRequired,
+            }]
+        );
+    }
+
+    /// Fanout into an OR input is not a merge violation.
+    #[test]
+    fn fanout_into_or_is_clean() {
+        let a_switch = Position(2, 4, 1);
+        let d1 = Position(2, 3, 1);
+        let d2 = Position(1, 3, 1);
+        let c = Position(1, 3, 0);
+        let b_torch = Position(0, 3, 0);
+        let d3 = Position(2, 5, 1);
+
+        let w = world(vec![
+            (a_switch, switch(Direction::East)),
+            (d1, dust()),
+            (d2, dust()),
+            (c, cobble()),
+            (b_torch, torch(Direction::North)),
+            (d3, dust()),
+        ]);
+
+        let a = analysis(
+            vec![(1, a_switch), (16, b_torch)],
+            vec![PinRecord {
+                node: 17,
+                position: d2,
+                contract: PinContract::Merge {
+                    input_nets: vec![1, 16],
+                },
+            }],
         );
 
         assert!(analyze(&w, &a).is_empty());
