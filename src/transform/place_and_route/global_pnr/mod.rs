@@ -617,7 +617,9 @@ pub fn place_and_route_routable_design_with_visualization(
         crate::snapshot::emit_json("ir/routable.json", design)?;
     }
     let prepared = prepare_routable_design_for_global_pnr(design, &PnrPrepareConfig::from(config))?;
-    run_prepared_pnr_with_visualization(&prepared, config)
+    let result = run_prepared_pnr_with_visualization(&prepared, config);
+    crate::perf::print_summary_if_enabled();
+    result
 }
 
 pub fn prepare_routable_design_for_global_pnr(
@@ -695,6 +697,8 @@ fn prepare_routable_module_with_topology(
     topology: ResolvedPnrTopology,
     config: &PnrPrepareConfig,
 ) -> eyre::Result<PreparedPnrDesign> {
+    let _stage = crate::perf::stage("candidate-prepare");
+    crate::perf::check_budget("candidate preparation")?;
     let started = Instant::now();
     let progress = GlobalPnrProgress::new(config.show_progress, module.name.clone());
     if matches!(module.body, RoutableModuleBody::Leaf { .. }) {
@@ -1075,6 +1079,8 @@ fn route_first_successful_placement(
     config: &GlobalPnrConfig,
     progress: &GlobalPnrProgress,
 ) -> eyre::Result<(Vec<PlacedModule>, Vec<RoutedNet>)> {
+    let _stage = crate::perf::stage("routing-attempts");
+    crate::perf::check_budget("global routing")?;
     let mut last_error = None;
     let order_strategies = if config.search.policies.net_order_strategies.is_empty() {
         vec![NetOrderStrategy::Criticality]
@@ -1160,6 +1166,7 @@ fn route_first_successful_placement(
 
         for decision in decisions {
             attempt_serial += 1;
+            crate::perf::check_budget("global routing")?;
             let placement_index = decision.placement_index;
             let order_index = decision.order_index;
             let placed = &placement_attempts[placement_index];
@@ -1217,6 +1224,11 @@ fn route_first_successful_placement(
                     ));
                     last_error = Some(failure.error);
                     routing_progress.maybe_report(progress, attempt_serial, total_attempts);
+                    if crate::perf::budget_exceeded() {
+                        return Err(eyre::eyre!(
+                            "memory budget exceeded during routing attempt {attempt_serial}"
+                        ));
+                    }
                     continue;
                 }
             };
@@ -1528,6 +1540,7 @@ fn prepare_routable_child_candidate_sets(
     let mut reused = 0usize;
     let mut candidate_references = 0usize;
     for (index, instance) in instances.iter().enumerate() {
+        crate::perf::check_budget("candidate generation")?;
         progress.item(
             index + 1,
             instances.len(),
@@ -1736,10 +1749,13 @@ fn search_layout_combinations(
     config: &GlobalPnrConfig,
     progress: &GlobalPnrProgress,
 ) -> eyre::Result<(Vec<LayoutCandidate>, Vec<PlacedModule>, Vec<RoutedNet>)> {
+    let _stage = crate::perf::stage("layout-search");
+    crate::perf::check_budget("layout search")?;
     let combinations =
         layout_combinations(pools, config.search.budget.max_layout_combinations.max(1));
     let mut last_error = None;
     for (combination_index, selection) in combinations.iter().enumerate() {
+        crate::perf::check_budget("layout search")?;
         progress.detail(format!(
             "layout combination {}/{}: {:?}",
             combination_index + 1,

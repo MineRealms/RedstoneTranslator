@@ -33,3 +33,10 @@ cargo test --release --lib -j 2 -- --skip test_generate_component --test-threads
 ```
 
 Full-flow PnR benchmark tests (`benchmark_pnr_baseline`, `benchmark_placement_engines_baseline`) are manual and can exhaust 32 GB. Run one benchmark per process with `MCHDL_BENCH=<name>` and only on a larger machine.
+
+## Performance instrumentation
+
+`MCHDL_PERF=1` prints per-stage world-clone counts, cloned bytes, and RSS, plus
+a final summary. `--memory-budget-mb <N>` turns the budget into a clear error
+instead of an OOM abort. The counters are always active (two relaxed atomic
+adds per `World3D` clone).

@@ -12,7 +12,9 @@ cargo run --release -- input.rsnap output.nbt    # replay a prepared PnR snapsho
 
 Optional flags: `--intent design.rclayout`, `--cell-library library.json`,
 `--mapping-policy mapping.json`, `--candidate-cache dir`, `--compress` (run the
-compression ladder; replaces `--intent` and needs a composite top module).
+compression ladder; replaces `--intent` and needs a composite top module),
+`--memory-budget-mb N` (fail with an error instead of an OOM abort).
+`MCHDL_PERF=1` prints per-stage clone counters and RSS.
 
 Run the tests with `cargo test --release` (see `AGENTS.md` for the
 memory-constrained test subset). Benchmarks live in `test/benchmarks/`.

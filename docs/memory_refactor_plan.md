@@ -1,6 +1,6 @@
 # Memory Architecture Refactor (M0.5)
 
-**Status**: planned · **Branch**: `cad-refactor` · **Baseline**: 359 passed / 0 failed
+**Status**: in progress · **Branch**: `cad-refactor` · **Baseline**: 362 passed / 0 failed
 (release, `-j1`, `--skip test_generate_component --test-threads=1`)
 
 **Related**: `performance_report.md` (current-state facts), `architecture.md`
@@ -64,19 +64,27 @@ Non-goals (deferred until after this plan):
 
 ## 4. Execution tracker
 
-### [ ] Commit 1 — perf: memory instrumentation and graceful budget
+### [x] Commit 1 — perf: memory instrumentation and graceful budget
 
 Scope: manual `impl Clone for World3D` with atomic clone count and copied bytes;
-stage markers (before/after candidate generation, placement, routing) with live
-bytes, queue lengths, and clone counts; process peak RSS via the OS or mimalloc
-stats; deterministic memory budget that returns an error instead of aborting.
+stage guards (candidate preparation, layout search, routing attempts) with
+per-stage deltas and RSS; process working-set sampling via the Windows API;
+deterministic memory budget that returns an error instead of aborting; CLI
+`--memory-budget-mb` and `MCHDL_PERF=1` verbose output.
 
-Files: `src/world/mod.rs`, `global_pnr/progress.rs` or a new `perf` module,
-`src/main.rs`.
+Files: `src/perf.rs`, `src/world/mod.rs`, `global_pnr/{mod,candidate}.rs`,
+`local_placer/mod.rs`, `route_engine/engine.rs`, `src/main.rs`.
 
-Acceptance: no behavior change; `full_adder` OOM becomes a budget error; counters
-printed for `not_chain`. Evidence needed: clone counts for `full_adder` and
-`random_10` to confirm the hot spots before touching them.
+Acceptance met: no behavior change (362 non-heavy tests green);
+`--memory-budget-mb 1` on `not_chain` fails with
+`memory budget exceeded during candidate preparation: RSS 6 MiB > budget 1 MiB`
+and exit code 1 instead of an abort.
+
+Evidence (`MCHDL_PERF=1`, `not_chain`): candidate preparation 394 ms,
+**47,660 world clones, 4.1 GB of cloned world bytes**, 16.6 MB allocated,
+peak RSS 265 MiB. This confirms that even the smallest benchmark explodes
+through world cloning in the local placer, and that Commit 3 is the first big
+target.
 
 ### [ ] Commit 2 — perf: adaptive initial box
 
@@ -86,7 +94,7 @@ from the tight estimate and grow on failure.
 
 Files: `global_pnr/annealed.rs`, `compression.rs`.
 
-Acceptance: small designs start near their volume-derived box; 359 tests green;
+Acceptance: small designs start near their volume-derived box; non-heavy suite green;
 measured world bytes drop.
 
 ### [ ] Commit 3 — refactor(local): placement queue world to delta
@@ -98,7 +106,7 @@ initialization semantics (`initialize_redstone_states` after materialization).
 Files: `local_placer/{mod,state,routing,sequential/*}.rs`.
 
 Acceptance: candidate output byte-identical to the baseline on snapshot tests;
-`full_adder` candidate generation completes within budget; 359 tests green.
+`full_adder` candidate generation completes within budget; non-heavy suite green.
 
 ### [ ] Commit 4 — refactor(router): route state world to delta
 
@@ -134,12 +142,12 @@ Scope: `validation.rs` world clones (three sites) become snapshot/restore of
 dynamic state; avoid rebuilding `assemble_world`/`placed_candidate_world` per
 attempt where possible; reuse negotiation assembly.
 
-Acceptance: attempt peak bytes drop; 359 tests green.
+Acceptance: attempt peak bytes drop; non-heavy suite green.
 
 ## 5. Acceptance red lines
 
 - Commits 3 and 4 must keep candidate/route outputs byte-identical (snapshot
-  diff plus the 359-test baseline).
+  diff plus the non-heavy test baseline).
 - Every commit keeps the non-heavy suite green:
   `cargo test --release --lib -j 1 -- --skip test_generate_component --test-threads=1`.
 - Builds use `-j 1` or `-j 2`; full-flow benchmarks stay off the 32 GB host.

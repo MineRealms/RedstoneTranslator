@@ -702,6 +702,10 @@ fn route_point_to_point_with_initial_queue(
         if route_expansion_limit(strategy).is_some_and(|limit| expansions > limit) {
             break;
         }
+        if expansions % 64 == 0 && crate::perf::rss_over_budget() {
+            crate::perf::note_budget_exceeded();
+            break;
+        }
 
         if !is_route_terminal(&state.world, state.terminal) {
             continue;

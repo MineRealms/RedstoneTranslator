@@ -27,15 +27,26 @@ impl World {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct World3D {
     pub size: DimSize,
     // z, y, z
     pub map: Vec<Vec<Vec<Block>>>,
 }
 
+impl Clone for World3D {
+    fn clone(&self) -> Self {
+        crate::perf::record_world_clone(self.size);
+        Self {
+            size: self.size,
+            map: self.map.clone(),
+        }
+    }
+}
+
 impl World3D {
     pub fn new(size: DimSize) -> Self {
+        crate::perf::record_world_alloc(size);
         Self {
             size,
             map: vec![vec![vec![Block::default(); size.0]; size.1]; size.2],
@@ -200,6 +211,7 @@ impl World3D {
 
 impl<'a> From<&'a World> for World3D {
     fn from(value: &'a World) -> Self {
+        crate::perf::record_world_alloc(value.size);
         let mut block_map: BTreeMap<PositionIndex, &Block> = BTreeMap::default();
 
         for block in &value.blocks {

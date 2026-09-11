@@ -323,6 +323,11 @@ impl LocalPlacer {
             let compacted = self.compact_queue_after_step(step, result.queue);
             let compacted_len = compacted.len();
             queue = self.sample(step, compacted);
+            if crate::perf::rss_over_budget() {
+                crate::perf::note_budget_exceeded();
+                queue.clear();
+                break;
+            }
             let sampled_len = queue.len();
             if let Some(debug) = debug.as_deref_mut() {
                 let mut step_debug = result.debug;

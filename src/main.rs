@@ -50,6 +50,10 @@ pub struct CompilerOption {
     /// Shrink the design with the compression ladder (replaces `--intent`).
     #[structopt(long)]
     pub compress: bool,
+
+    /// Fail with an error once the process working set exceeds this budget.
+    #[structopt(long)]
+    pub memory_budget_mb: Option<usize>,
 }
 
 fn load_mapping_spec(path: &std::path::Path) -> eyre::Result<MappingSpec> {
@@ -73,6 +77,10 @@ fn apply_cell_library(config: &mut GlobalPnrConfig, library: Option<CellLibrary>
 fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
     let opt = CompilerOption::from_args();
+    redstone_compiler::perf::set_verbose(std::env::var_os("MCHDL_PERF").is_some());
+    if let Some(megabytes) = opt.memory_budget_mb {
+        redstone_compiler::perf::set_budget_mb(megabytes);
+    }
 
     match opt.input.extension().and_then(|ext| ext.to_str()) {
         Some("rcir") => compile_rcir_input(opt),

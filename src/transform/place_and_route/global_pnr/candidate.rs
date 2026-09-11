@@ -207,6 +207,7 @@ fn generate_unit_candidates(
     contract: Option<&CellPhysicalContract>,
     progress_label: Option<&str>,
 ) -> eyre::Result<Vec<LayoutCandidate>> {
+    crate::perf::check_budget("local candidate generation")?;
     let graph = LogicGraph { graph }.prepare_place()?;
     let placer = LocalPlacer::new(graph.clone(), config.local_config)?;
 
@@ -216,6 +217,9 @@ fn generate_unit_candidates(
         &config.input_constraints,
         progress_label,
     );
+    if crate::perf::budget_exceeded() {
+        eyre::bail!("memory budget exceeded during local candidate generation for `{module_name}`");
+    }
 
     let contains_sequential = graph
         .graph
