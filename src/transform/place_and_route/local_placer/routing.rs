@@ -139,9 +139,12 @@ pub(super) fn generate_place_and_routes(
     world: &World3D,
     start: Position,
     kind: BlockKind,
+    pre_route_observer: Option<&mut dyn FnMut(&World3D, Position)>,
 ) -> Vec<(World3D, Position)> {
     match kind {
-        BlockKind::Torch { .. } => generate_torch_place_and_routes(config, world, start, kind),
+        BlockKind::Torch { .. } => {
+            generate_torch_place_and_routes(config, world, start, kind, pre_route_observer)
+        }
         _ => unimplemented!(),
     }
 }
@@ -172,6 +175,7 @@ pub(super) fn generate_torch_place_and_routes(
     world: &World3D,
     source: Position,
     kind: BlockKind,
+    mut pre_route_observer: Option<&mut dyn FnMut(&World3D, Position)>,
 ) -> Vec<(World3D, Position)> {
     let torch_strategy =
         Direction::iter_direction_without_top().map(|direction| Block { kind, direction });
@@ -195,6 +199,9 @@ pub(super) fn generate_torch_place_and_routes(
         .flat_map(|(torch, torch_pos)| place_torch_with_cobble(world, torch, torch_pos))
         // 2. Route Source with Torch Place Target Position
         .flat_map(|(world, torch_pos, cobble_pos)| {
+            if let Some(observer) = pre_route_observer.as_deref_mut() {
+                observer(&world, cobble_pos);
+            }
             generate_routes_to_cobble(config, &world, source, torch_pos, cobble_pos)
                 .into_iter()
                 .map(|(world, _)| (world, torch_pos))

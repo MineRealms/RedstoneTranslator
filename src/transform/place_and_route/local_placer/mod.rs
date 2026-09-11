@@ -16,7 +16,9 @@ use crate::logic::LogicType;
 use crate::output::{OutputEndpoint, PlacedWorld};
 use crate::sequential::layout::SequentialMacro;
 use crate::sequential::{SequentialPrimitive, SequentialType};
-use crate::transform::place_and_route::electrical_drc::{PinContract, PinRecord, PlacedAnalysis};
+use crate::transform::place_and_route::electrical_drc::{
+    PinContract, PinPort, PinRecord, PlacedAnalysis,
+};
 use crate::transform::place_and_route::estimate::{bounding_box_of_positions, world_compact_cost};
 use crate::transform::place_and_route::place_bound::PropagateType;
 use crate::world::block::{Block, BlockKind, Direction};
@@ -640,37 +642,80 @@ impl LocalPlacer {
             }
             GraphNodeKind::Output(_) => vec![(world.clone(), state.clone())],
             GraphNodeKind::Logic(logic) => match logic.logic_type {
-                LogicType::Not => not_node_kind()
-                    .into_iter()
-                    .flat_map(|kind| {
-                        generate_place_and_routes(
-                            &self.config,
+                LogicType::Not => {
+                    let peca_debug =
+                        crate::transform::place_and_route::electrical_drc::debug_enabled();
+                    let net_index = peca_debug.then(|| {
+                        crate::transform::place_and_route::electrical_drc::NetIndex::build(
                             &world,
-                            state[&node.inputs[0]],
-                            kind,
+                            state.anchors(),
                         )
-                    })
-                    .map(|(world, position)| {
-                        let mut state = state.clone();
-                        state.set_node_position(node.id, position);
-                        let support = position.walk(world[position].direction);
-                        state.set_signal_footprint(
-                            node.id,
-                            [Some(position), support].into_iter().flatten(),
+                    });
+                    let expected_net = node.inputs[0];
+                    let node_id = node.id;
+                    let mut pre_route_observer = |placed: &World3D, support: Position| {
+                        let Some(index) = &net_index else {
+                            return;
+                        };
+                        let pin = PinRecord::new(
+                            node_id,
+                            PinPort::Index(0),
+                            support,
+                            PinContract::Single { expected_net },
                         );
-                        state.record_anchor(node.id, position);
-                        if let Some(support) = support {
-                            state.record_pin(PinRecord {
-                                node: node.id,
-                                position: support,
-                                contract: PinContract::Single {
-                                    expected_net: node.inputs[0],
-                                },
-                            });
+                        if let crate::transform::place_and_route::electrical_drc::DrcResult::Reject(
+                            violations,
+                        ) = crate::transform::place_and_route::electrical_drc::check_pin(
+                            placed, index, &pin,
+                        ) {
+                            for violation in violations {
+                                crate::perf::note_candidate_drc_pre_route();
+                                if peca_debug {
+                                    eprintln!(
+                                        "[peca-pre] node={} support={:?} reason={:?} drivers={:?}",
+                                        violation.pin.node,
+                                        violation.position,
+                                        violation.reason,
+                                        violation.drivers
+                                    );
+                                }
+                            }
                         }
-                        (world, state)
-                    })
-                    .collect(),
+                    };
+                    not_node_kind()
+                        .into_iter()
+                        .flat_map(|kind| {
+                            generate_place_and_routes(
+                                &self.config,
+                                &world,
+                                state[&node.inputs[0]],
+                                kind,
+                                Some(&mut pre_route_observer),
+                            )
+                        })
+                        .map(|(world, position)| {
+                            let mut state = state.clone();
+                            state.set_node_position(node.id, position);
+                            let support = position.walk(world[position].direction);
+                            state.set_signal_footprint(
+                                node.id,
+                                [Some(position), support].into_iter().flatten(),
+                            );
+                            state.record_anchor(node.id, position);
+                            if let Some(support) = support {
+                                state.record_pin(PinRecord::new(
+                                    node.id,
+                                    PinPort::Index(0),
+                                    support,
+                                    PinContract::Single {
+                                        expected_net: node.inputs[0],
+                                    },
+                                ));
+                            }
+                            (world, state)
+                        })
+                        .collect()
+                }
                 LogicType::Or => {
                     assert_eq!(node.inputs.len(), 2);
                     let input_a = state[&node.inputs[0]];
@@ -718,13 +763,14 @@ impl LocalPlacer {
                                         [Some(position), position.down()].into_iter().flatten(),
                                     );
                                     state.record_anchor(node.id, position);
-                                    state.record_pin(PinRecord {
-                                        node: node.id,
+                                    state.record_pin(PinRecord::new(
+                                        node.id,
+                                        PinPort::Named("tap".to_owned()),
                                         position,
-                                        contract: PinContract::Merge {
+                                        PinContract::Merge {
                                             input_nets: node.inputs.clone(),
                                         },
-                                    });
+                                    ));
                                     (candidate_world.clone(), state)
                                 })
                                 .collect_vec()

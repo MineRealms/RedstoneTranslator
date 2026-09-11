@@ -251,7 +251,7 @@ fn generate_unit_candidates(
                 if peca_debug_enabled() {
                     eprintln!(
                         "[peca] {module_name} node={} pin={:?} reason={:?} drivers={:?}",
-                        violation.node, violation.position, violation.reason, violation.drivers
+                        violation.pin.node, violation.position, violation.reason, violation.drivers
                     );
                 }
             }
@@ -313,17 +313,7 @@ fn truth_debug_enabled() -> bool {
 }
 
 fn peca_debug_enabled() -> bool {
-    use std::sync::atomic::{AtomicU8, Ordering};
-    static FLAG: AtomicU8 = AtomicU8::new(0);
-    match FLAG.load(Ordering::Relaxed) {
-        1 => true,
-        2 => false,
-        _ => {
-            let enabled = std::env::var_os("MCHDL_DEBUG_PECA").is_some();
-            FLAG.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
-            enabled
-        }
-    }
+    crate::transform::place_and_route::electrical_drc::debug_enabled()
 }
 
 fn peca_enforce_enabled() -> bool {

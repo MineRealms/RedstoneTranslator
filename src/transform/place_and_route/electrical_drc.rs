@@ -27,11 +27,59 @@ pub enum PinContract {
     Passive,
 }
 
+/// A port on a node. Primitives use positional ports (`Index`); sequential and
+/// macro pins use names, reusing the `MacroPin.name` convention.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PinPort {
+    Named(String),
+    Index(usize),
+}
+
+/// The physical identity of a pin. The logical net identity stays
+/// `GraphNodeId` (the truth-table identity); the port qualifies the pin.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PinId {
+    pub node: GraphNodeId,
+    pub port: PinPort,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PinIsolationPolicy {
+    /// NOT/repeater/latch input: exactly one logical source.
+    SingleSource,
+    /// OR tap: the union of the declared input nets.
+    Merge,
+    /// Sequential-macro internals are not checked in the first release.
+    None,
+}
+
 #[derive(Clone, Debug)]
 pub struct PinRecord {
-    pub node: GraphNodeId,
+    pub id: PinId,
     pub position: Position,
     pub contract: PinContract,
+    pub policy: PinIsolationPolicy,
+}
+
+impl PinRecord {
+    pub fn new(
+        node: GraphNodeId,
+        port: PinPort,
+        position: Position,
+        contract: PinContract,
+    ) -> Self {
+        let policy = match &contract {
+            PinContract::Single { .. } => PinIsolationPolicy::SingleSource,
+            PinContract::Merge { .. } => PinIsolationPolicy::Merge,
+            PinContract::Passive => PinIsolationPolicy::None,
+        };
+        Self {
+            id: PinId { node, port },
+            position,
+            contract,
+            policy,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -59,11 +107,31 @@ pub enum ViolationReason {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Violation {
-    pub node: GraphNodeId,
+    pub pin: PinId,
     pub position: Position,
     pub drivers: Vec<(GraphNodeId, Position)>,
     pub reason: ViolationReason,
     pub confidence: ConnectivityConfidence,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DrcResult {
+    Pass,
+    Reject(Vec<Violation>),
+}
+
+pub fn debug_enabled() -> bool {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    static FLAG: AtomicU8 = AtomicU8::new(0);
+    match FLAG.load(Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => {
+            let enabled = std::env::var_os("MCHDL_DEBUG_PECA").is_some();
+            FLAG.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
+            enabled
+        }
+    }
 }
 
 /// Electrical components over redstone dust. Dust connects to dust; a cobble
@@ -147,149 +215,164 @@ fn terminal_nets_per_component(
     result
 }
 
-/// The positions a logical net is allowed to drive from, for a `Single` pin.
-/// A terminal net drives from its own block plus any redstone component it
-/// powers; an OR net drives from the redstone component containing its tap.
-fn allowed_driver_positions(
-    net: GraphNodeId,
-    world: &World3D,
-    anchor: &HashMap<GraphNodeId, Position>,
-    component_of: &HashMap<Position, usize>,
-    component_positions: &HashMap<usize, HashSet<Position>>,
-    component_nets: &HashMap<usize, BTreeSet<GraphNodeId>>,
-) -> HashSet<Position> {
-    let Some(anchor_pos) = anchor.get(&net).copied() else {
-        return HashSet::new();
-    };
-
-    let mut allowed = HashSet::new();
-    if world[anchor_pos].kind.is_redstone() {
-        if let Some(&cid) = component_of.get(&anchor_pos) {
-            if let Some(positions) = component_positions.get(&cid) {
-                allowed.extend(positions.iter().copied());
-            }
-        }
-        return allowed;
-    }
-
-    allowed.insert(anchor_pos);
-    for (cid, nets) in component_nets {
-        // A terminal net may only drive a component that carries exactly that
-        // net; a component shared with a foreign net is a short.
-        if nets.len() == 1 && nets.contains(&net) {
-            if let Some(positions) = component_positions.get(cid) {
-                allowed.extend(positions.iter().copied());
-            }
-        }
-    }
-    allowed
+/// Precomputed electrical facts about a placed world plus its anchors: dust
+/// components, the nets that drive each component, and the position -> net map.
+pub struct NetIndex {
+    anchor: HashMap<GraphNodeId, Position>,
+    position_to_net: HashMap<Position, GraphNodeId>,
+    component_of: HashMap<Position, usize>,
+    component_positions: HashMap<usize, HashSet<Position>>,
+    component_nets: HashMap<usize, BTreeSet<GraphNodeId>>,
 }
 
-fn driver_nets(
-    source: Position,
-    world: &World3D,
-    position_to_net: &HashMap<Position, GraphNodeId>,
-    component_of: &HashMap<Position, usize>,
-    component_nets: &HashMap<usize, BTreeSet<GraphNodeId>>,
-) -> Vec<GraphNodeId> {
-    if world[source].kind.is_redstone() {
-        let Some(&cid) = component_of.get(&source) else {
-            return Vec::new();
+impl NetIndex {
+    pub fn build(world: &World3D, anchors: &[(GraphNodeId, Position)]) -> Self {
+        let mut anchor = HashMap::new();
+        let mut position_to_net = HashMap::new();
+        for (net, pos) in anchors {
+            anchor.insert(*net, *pos);
+            position_to_net.entry(*pos).or_insert(*net);
+        }
+        let (component_of, component_positions) = electrical_components(world);
+        let component_nets = terminal_nets_per_component(world, &component_of, &anchor);
+        Self {
+            anchor,
+            position_to_net,
+            component_of,
+            component_positions,
+            component_nets,
+        }
+    }
+
+    /// The positions a logical net is allowed to drive from, for a `Single`
+    /// pin. A terminal net drives from its own block plus any dust component
+    /// that carries exactly that net; an OR net drives from the dust component
+    /// containing its tap.
+    fn allowed_driver_positions(&self, net: GraphNodeId, world: &World3D) -> HashSet<Position> {
+        let Some(anchor_pos) = self.anchor.get(&net).copied() else {
+            return HashSet::new();
         };
-        component_nets.get(&cid).map(|nets| nets.iter().copied().collect()).unwrap_or_default()
+
+        let mut allowed = HashSet::new();
+        if world[anchor_pos].kind.is_redstone() {
+            if let Some(&cid) = self.component_of.get(&anchor_pos) {
+                if let Some(positions) = self.component_positions.get(&cid) {
+                    allowed.extend(positions.iter().copied());
+                }
+            }
+            return allowed;
+        }
+
+        allowed.insert(anchor_pos);
+        for (cid, nets) in &self.component_nets {
+            // A terminal net may only drive a component that carries exactly
+            // that net; a component shared with a foreign net is a short.
+            if nets.len() == 1 && nets.contains(&net) {
+                if let Some(positions) = self.component_positions.get(cid) {
+                    allowed.extend(positions.iter().copied());
+                }
+            }
+        }
+        allowed
+    }
+
+    fn driver_nets(&self, source: Position, world: &World3D) -> Vec<GraphNodeId> {
+        if world[source].kind.is_redstone() {
+            let Some(&cid) = self.component_of.get(&source) else {
+                return Vec::new();
+            };
+            self.component_nets
+                .get(&cid)
+                .map(|nets| nets.iter().copied().collect())
+                .unwrap_or_default()
+        } else {
+            self.position_to_net
+                .get(&source)
+                .copied()
+                .into_iter()
+                .collect()
+        }
+    }
+}
+
+/// Check a single pin against the current world. Used by `analyze` (after
+/// placement) and by the pre-route hook, where the connecting route does not
+/// exist yet and a `Single` pin only requires the absence of foreign drivers.
+pub fn check_pin(world: &World3D, index: &NetIndex, pin: &PinRecord) -> DrcResult {
+    let mut violations = Vec::new();
+    match &pin.contract {
+        PinContract::Single { expected_net } => {
+            let allowed = index.allowed_driver_positions(*expected_net, world);
+            for (source, _) in electrical::cobble_power_sources(world, pin.position) {
+                if allowed.contains(&source) {
+                    continue;
+                }
+                let drivers = index
+                    .driver_nets(source, world)
+                    .into_iter()
+                    .map(|net| (net, source))
+                    .collect::<Vec<_>>();
+                if drivers.is_empty() {
+                    // A driver with no possible driving net is never powered;
+                    // it is not a violation.
+                    continue;
+                }
+                violations.push(Violation {
+                    pin: pin.id.clone(),
+                    position: pin.position,
+                    drivers,
+                    reason: ViolationReason::ExtraDriver,
+                    confidence: ConnectivityConfidence::Certain,
+                });
+            }
+        }
+        PinContract::Merge { input_nets } => {
+            let expected: BTreeSet<GraphNodeId> = input_nets.iter().copied().collect();
+            let actual = index
+                .component_of
+                .get(&pin.position)
+                .and_then(|cid| index.component_nets.get(cid))
+                .cloned()
+                .unwrap_or_default();
+            for missing in expected.difference(&actual) {
+                violations.push(Violation {
+                    pin: pin.id.clone(),
+                    position: pin.position,
+                    drivers: Vec::new(),
+                    reason: ViolationReason::MissingBranch(*missing),
+                    confidence: ConnectivityConfidence::SimulationRequired,
+                });
+            }
+            for foreign in actual.difference(&expected) {
+                violations.push(Violation {
+                    pin: pin.id.clone(),
+                    position: pin.position,
+                    drivers: vec![(*foreign, pin.position)],
+                    reason: ViolationReason::ForeignNet(*foreign),
+                    confidence: ConnectivityConfidence::SimulationRequired,
+                });
+            }
+        }
+        PinContract::Passive => {}
+    }
+
+    if violations.is_empty() {
+        DrcResult::Pass
     } else {
-        position_to_net
-            .get(&source)
-            .copied()
-            .into_iter()
-            .collect()
+        DrcResult::Reject(violations)
     }
 }
 
 pub fn analyze(world: &World3D, analysis: &PlacedAnalysis) -> Vec<Violation> {
-    let mut anchor = HashMap::new();
-    let mut position_to_net = HashMap::new();
-    for (net, pos) in &analysis.anchors {
-        anchor.insert(*net, *pos);
-        position_to_net.entry(*pos).or_insert(*net);
-    }
-
-    let (component_of, component_positions) = electrical_components(world);
-    let component_nets = terminal_nets_per_component(world, &component_of, &anchor);
-
+    let index = NetIndex::build(world, &analysis.anchors);
     let mut violations = Vec::new();
     for pin in &analysis.pins {
-        match &pin.contract {
-            PinContract::Single { expected_net } => {
-                let allowed = allowed_driver_positions(
-                    *expected_net,
-                    world,
-                    &anchor,
-                    &component_of,
-                    &component_positions,
-                    &component_nets,
-                );
-                for (source, _) in electrical::cobble_power_sources(world, pin.position) {
-                    if allowed.contains(&source) {
-                        continue;
-                    }
-                    let drivers = driver_nets(source, world, &position_to_net, &component_of, &component_nets)
-                        .into_iter()
-                        .map(|net| (net, source))
-                        .collect::<Vec<_>>();
-                    if drivers.is_empty() {
-                        // A driver with no possible driving net is never powered;
-                        // it is not a violation.
-                        continue;
-                    }
-                    violations.push(Violation {
-                        node: pin.node,
-                        position: pin.position,
-                        drivers,
-                        reason: ViolationReason::ExtraDriver,
-                        confidence: ConnectivityConfidence::Certain,
-                    });
-                }
-            }
-            PinContract::Merge { input_nets } => {
-                let expected: BTreeSet<GraphNodeId> = input_nets.iter().copied().collect();
-                let Some(&cid) = component_of.get(&pin.position) else {
-                    for missing in &expected {
-                        violations.push(Violation {
-                            node: pin.node,
-                            position: pin.position,
-                            drivers: Vec::new(),
-                            reason: ViolationReason::MissingBranch(*missing),
-                            confidence: ConnectivityConfidence::SimulationRequired,
-                        });
-                    }
-                    continue;
-                };
-                let actual = component_nets.get(&cid).cloned().unwrap_or_default();
-                for missing in expected.difference(&actual) {
-                    violations.push(Violation {
-                        node: pin.node,
-                        position: pin.position,
-                        drivers: Vec::new(),
-                        reason: ViolationReason::MissingBranch(*missing),
-                        confidence: ConnectivityConfidence::SimulationRequired,
-                    });
-                }
-                for foreign in actual.difference(&expected) {
-                    violations.push(Violation {
-                        node: pin.node,
-                        position: pin.position,
-                        drivers: vec![(*foreign, pin.position)],
-                        reason: ViolationReason::ForeignNet(*foreign),
-                        confidence: ConnectivityConfidence::SimulationRequired,
-                    });
-                }
-            }
-            PinContract::Passive => {}
+        if let DrcResult::Reject(pin_violations) = check_pin(world, &index, pin) {
+            violations.extend(pin_violations);
         }
     }
 
-    violations.sort_by_key(|v| (v.node, v.position, v.reason.clone(), v.confidence));
+    violations.sort_by_key(|v| (v.pin.node, v.position, v.reason.clone(), v.confidence));
     violations
 }
 
@@ -356,18 +439,22 @@ mod tests {
 
         let a = analysis(
             vec![(5, state), (16, n16), (20, n20)],
-            vec![PinRecord {
-                node: 20,
-                position: n20_support,
-                contract: PinContract::Single { expected_net: 16 },
-            }],
+            vec![PinRecord::new(
+                20,
+                PinPort::Index(0),
+                n20_support,
+                PinContract::Single { expected_net: 16 },
+            )],
         );
 
         let violations = analyze(&w, &a);
         assert_eq!(
             violations,
             vec![Violation {
-                node: 20,
+                pin: PinId {
+                    node: 20,
+                    port: PinPort::Index(0),
+                },
                 position: n20_support,
                 drivers: vec![(5, state)],
                 reason: ViolationReason::ExtraDriver,
@@ -397,16 +484,18 @@ mod tests {
         let a = analysis(
             vec![(5, state), (16, n16), (20, n20)],
             vec![
-                PinRecord {
-                    node: 16,
-                    position: n16_support,
-                    contract: PinContract::Single { expected_net: 5 },
-                },
-                PinRecord {
-                    node: 20,
-                    position: n20_support,
-                    contract: PinContract::Single { expected_net: 16 },
-                },
+                PinRecord::new(
+                    16,
+                    PinPort::Index(0),
+                    n16_support,
+                    PinContract::Single { expected_net: 5 },
+                ),
+                PinRecord::new(
+                    20,
+                    PinPort::Index(0),
+                    n20_support,
+                    PinContract::Single { expected_net: 16 },
+                ),
             ],
         );
 
@@ -437,16 +526,18 @@ mod tests {
         let a = analysis(
             vec![(7, source), (16, n16), (17, n17)],
             vec![
-                PinRecord {
-                    node: 16,
-                    position: Position(1, 3, 1),
-                    contract: PinContract::Single { expected_net: 7 },
-                },
-                PinRecord {
-                    node: 17,
-                    position: Position(3, 3, 1),
-                    contract: PinContract::Single { expected_net: 7 },
-                },
+                PinRecord::new(
+                    16,
+                    PinPort::Index(0),
+                    Position(1, 3, 1),
+                    PinContract::Single { expected_net: 7 },
+                ),
+                PinRecord::new(
+                    17,
+                    PinPort::Index(0),
+                    Position(3, 3, 1),
+                    PinContract::Single { expected_net: 7 },
+                ),
             ],
         );
 
@@ -485,13 +576,14 @@ mod tests {
 
         let a = analysis(
             vec![(1, a_switch), (16, b_torch)],
-            vec![PinRecord {
-                node: 17,
-                position: d2,
-                contract: PinContract::Merge {
+            vec![PinRecord::new(
+                17,
+                PinPort::Named("tap".to_owned()),
+                d2,
+                PinContract::Merge {
                     input_nets: vec![1, 16],
                 },
-            }],
+            )],
         );
 
         assert!(analyze(&w, &a).is_empty());
@@ -515,19 +607,23 @@ mod tests {
 
         let a = analysis(
             vec![(1, a_switch)],
-            vec![PinRecord {
-                node: 17,
-                position: d2,
-                contract: PinContract::Merge {
+            vec![PinRecord::new(
+                17,
+                PinPort::Named("tap".to_owned()),
+                d2,
+                PinContract::Merge {
                     input_nets: vec![1, 16],
                 },
-            }],
+            )],
         );
 
         assert_eq!(
             analyze(&w, &a),
             vec![Violation {
-                node: 17,
+                pin: PinId {
+                    node: 17,
+                    port: PinPort::Named("tap".to_owned()),
+                },
                 position: d2,
                 drivers: Vec::new(),
                 reason: ViolationReason::MissingBranch(16),
@@ -557,19 +653,23 @@ mod tests {
 
         let a = analysis(
             vec![(1, a_switch), (16, b_torch), (99, foreign)],
-            vec![PinRecord {
-                node: 17,
-                position: d2,
-                contract: PinContract::Merge {
+            vec![PinRecord::new(
+                17,
+                PinPort::Named("tap".to_owned()),
+                d2,
+                PinContract::Merge {
                     input_nets: vec![1, 16],
                 },
-            }],
+            )],
         );
 
         assert_eq!(
             analyze(&w, &a),
             vec![Violation {
-                node: 17,
+                pin: PinId {
+                    node: 17,
+                    port: PinPort::Named("tap".to_owned()),
+                },
                 position: d2,
                 drivers: vec![(99, d2)],
                 reason: ViolationReason::ForeignNet(99),
@@ -599,13 +699,14 @@ mod tests {
 
         let a = analysis(
             vec![(1, a_switch), (16, b_torch)],
-            vec![PinRecord {
-                node: 17,
-                position: d2,
-                contract: PinContract::Merge {
+            vec![PinRecord::new(
+                17,
+                PinPort::Named("tap".to_owned()),
+                d2,
+                PinContract::Merge {
                     input_nets: vec![1, 16],
                 },
-            }],
+            )],
         );
 
         assert!(analyze(&w, &a).is_empty());

@@ -178,3 +178,76 @@ passed; it contains no `Certain` violations). Enforcement is safe as a gate,
 but the legacy placer cannot yet produce a clean candidate for the
 `state_next`/`tail_n8`/`tail_n19` shapes: generation-time avoidance (M0.12) or
 DCE (M0.11) is required before default-on.
+
+## 10. M0.12 interface freeze (Electrical Legality Filter)
+
+M0.12 turns candidate generation from "geometrically placeable" into
+"electrically legal". The interface is frozen before implementation because it
+is consumed by NOT, repeater adapters, sequential macros, the global router,
+and the SA cost model.
+
+### 10.1 Module layout
+
+The layer stays under `src/transform/place_and_route/` (never `world/`, which
+remains the pure Minecraft model). Target layout once the file grows:
+`electrical_drc/{mod.rs, pin.rs, driver.rs, report.rs}`. The shared driver
+query already lives in `world/electrical.rs` (M0.12.0, commit `fa1d6db`) and is
+used by both the simulator and PECA, so the two can never disagree on what can
+power what.
+
+### 10.2 Types
+
+```rust
+pub enum PinPort { Named(String), Index(usize) }
+pub struct PinId { pub node: GraphNodeId, pub port: PinPort }
+
+pub enum PinIsolationPolicy { SingleSource, Merge, SequentialInput, None }
+
+pub struct PinRecord {
+    pub id: PinId,
+    pub position: Position,
+    pub contract: PinContract,
+    pub policy: PinIsolationPolicy,
+}
+
+pub enum DrcResult { Pass, Reject(Vec<Violation>) }
+```
+
+Primitives use `PinPort::Index` (`in0`, `in1`, `out`); sequential and macro
+pins use `PinPort::Named`, reusing the `MacroPin.name` convention. The logical
+net identity stays `GraphNodeId` (the truth-table identity); the port only
+qualifies the physical pin.
+
+### 10.3 Hooks
+
+- **Pre-route pin check** (`check_pin_before_route`): after
+  `place_torch_with_cobble` and before `generate_routes_to_cobble`. It only
+  requires `existing_driver \ allowed_source == ∅`, because the route that
+  connects the intended source does not exist yet.
+- **Driver-side check** (`check_new_driver_against_existing_pins`): whenever a
+  new terminal (torch, switch, redstone block, repeater) is placed, verify its
+  `power_targets` do not hit an existing foreign pin. This catches coupling
+  introduced by later nodes.
+- **Post-candidate PECA** remains the complete validator
+  (`driver_nets == expected`), including the OR merge.
+
+`allowed_sources` is expressed as `AllowedSource::{NodeOutput, PhysicalTerminal}`
+so fanout and future repeaters extend it without reshaping the API.
+
+### 10.4 Enforcement policy
+
+`Certain` (`SingleSource`) violations are hard-rejected. `SimulationRequired`
+(`Merge`, near-driver) violations are report-only and may later become a soft
+cost term rather than a reject. Soft penalties are never applied to `Certain`
+violations, because a deterministic short must not be sampled.
+
+### 10.5 Commit order
+
+1. **M0.12.0** — shared electrical driver query (`fa1d6db`, done).
+2. **M0.12.1** — report-only pre-route pin check + `PinId`/`NetIndex` API.
+3. **M0.12.2** — report-only driver-side check.
+4. **M0.12.3** — enforce `SingleSource` (NOT/repeater/latch inputs); OR stays
+   report-only.
+5. **M0.12.4** — legality-yield benchmark; flip PECA default-on only if the
+   legal-candidate yield is sufficient.
+6. **M0.11** — DCE-lite (plain DAG liveness in `prepare_place`).
