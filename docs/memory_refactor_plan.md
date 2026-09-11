@@ -181,15 +181,21 @@ Acceptance: attempt peak bytes drop; non-heavy suite green.
   with no result. With the default changed to `Some(32)`, `a & ~b` compiles end
   to end in under a second (162 MiB peak), and `state_next` goes from OOM to 32
   candidates in 13.5 s at 20 MiB.
-- **Open (root cause B)**: all 32 `state_next` candidates are rejected by the
-  truth-table check. The diagnostic prints `input_names=["go","state"]`,
-  expected `__next = [false,true,false,false]` (i.e. `go & ~state`), but the
-  physical world is powered at mask `go=0,state=1` where the expected value is
-  false, i.e. the realized function behaves like `go | state`. The 3-node
-  `a & ~b` graph passes, so the issue is specific to the larger graph shape
-  (fanout plus the double-inversion De Morgan chain). Next step: build the
-  exact graph from the dumped node list as a unit reproducer and bisect by
-  removing fanout/inversions until it passes.
+- **Root cause B (localized)**: all 32 `state_next` candidates are rejected by
+  the truth-table check. An exact graph reproducer now lives in the ignored
+  test `state_next_graph_candidate_truth_reproducer`
+  (`global_pnr/candidate.rs`); it reproduces `candidates=0 truth_rejects=32`
+  with the same config as the smoke test. Bisect results: `tail_n8` (Or tail)
+  and `tail_n19` (Not of n8) pass; `tail_n20` (`Not(Not(state))` as the output)
+  and `tail_n21` fail with 32/32 rejects; `state_direct` and `n8_direct`
+  produce no placed worlds. The minimal failing subgraph is the double
+  inversion `state -> n16 -> n20` used as the output, and the failure mode
+  matches the second inversion being realized as a single inversion
+  (`n20 = ~state`): at `go=0,state=1` that yields `n22=1` where the expected
+  value is 0, exactly the printed mismatch. Next step: expose the local
+  placer's node positions (`PlacementState`) to confirm that the second
+  inversion's support is powered by the `state` input instead of `n16`, then
+  fix the routing.
 - **Limitation (root cause C)**: `full_adder` (27 prepared nodes) produces zero
   placements even with `combinational_sampling_limit = 128` and a 40M clone
   limit; the legacy local placer cannot realize that cone.

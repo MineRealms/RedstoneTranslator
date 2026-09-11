@@ -197,6 +197,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M0.5.5 | Deterministic local work budget + frontier cap; `full_adder`/`fsm_1bit` fail gracefully in ~66 s instead of OOM; wide-limit control confirms the legacy placer is the wall | 362 non-heavy tests |
 | CAD-M0.6 | Truth-table rejection diagnosis: fixed the multi-input sampling explosion (`Some(32)` default; `a & ~b` now compiles); `state_next` still 32/32 truth rejects; `full_adder` unplaceable; Annealed composite reaches routing but fails | 362 non-heavy tests |
 | CAD-M0.7 | Annealed routability: spacing/pin-access costs, 4-cell margin, 6-cell channels, multi-seed attempts; composite `andnot` chain routes in 4.7 s / 49 MiB vs Legacy 16.6 s / 73 MiB | 362 non-heavy tests |
+| CAD-M0.8 | `state_next` truth-rejection reproducer and bisect: minimal failing subgraph is `Not(Not(state))`; failure matches a lost inversion | 362 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

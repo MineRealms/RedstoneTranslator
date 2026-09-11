@@ -1859,7 +1859,7 @@ fn search_layout_combinations(
     Err(last_error.unwrap_or_else(|| eyre::eyre!("no child layout combinations generated")))
 }
 
-fn candidate_config_for_routable_child(
+pub(crate) fn candidate_config_for_routable_child(
     child: &RoutableModule,
     base_config: &UnitCandidateConfig,
 ) -> UnitCandidateConfig {

@@ -994,4 +994,166 @@ mod tests {
             .effective_contract_for_definition("other")
             .is_none());
     }
+
+    fn repro_node(
+        id: usize,
+        kind: crate::ir::RoutableNodeKind,
+        inputs: Vec<usize>,
+    ) -> crate::ir::RoutableNode {
+        crate::ir::RoutableNode {
+            id,
+            kind,
+            inputs,
+            tag: String::new(),
+        }
+    }
+
+    fn repro_leaf(name: &str, nodes: Vec<crate::ir::RoutableNode>) -> crate::ir::RoutableModule {
+        use crate::ir::{RoutableModule, RoutableModuleBody, RoutablePort, RoutablePortDirection};
+        let ports = nodes
+            .iter()
+            .filter_map(|node| match &node.kind {
+                crate::ir::RoutableNodeKind::Input { name } => Some(RoutablePort {
+                    name: name.clone(),
+                    direction: RoutablePortDirection::Input,
+                }),
+                crate::ir::RoutableNodeKind::Output { name } => Some(RoutablePort {
+                    name: name.clone(),
+                    direction: RoutablePortDirection::Output,
+                }),
+                _ => None,
+            })
+            .collect();
+        RoutableModule {
+            name: name.to_owned(),
+            ports,
+            body: RoutableModuleBody::Leaf { nodes },
+        }
+    }
+
+    fn repro_state_next_nodes(output_input: usize) -> Vec<crate::ir::RoutableNode> {
+        use crate::ir::RoutableNodeKind::{Constant, Input, Not, Or, Output};
+        vec![
+            repro_node(0, Constant { value: true }, vec![]),
+            repro_node(
+                1,
+                Input {
+                    name: "go".to_owned(),
+                },
+                vec![],
+            ),
+            repro_node(3, Not, vec![0]),
+            repro_node(
+                5,
+                Input {
+                    name: "state".to_owned(),
+                },
+                vec![],
+            ),
+            repro_node(8, Or, vec![1, 18]),
+            repro_node(
+                14,
+                Output {
+                    name: "__next".to_owned(),
+                },
+                vec![output_input],
+            ),
+            repro_node(16, Not, vec![5]),
+            repro_node(17, Or, vec![1, 16]),
+            repro_node(18, Not, vec![17]),
+            repro_node(19, Not, vec![8]),
+            repro_node(20, Not, vec![16]),
+            repro_node(21, Or, vec![19, 20]),
+            repro_node(22, Not, vec![21]),
+        ]
+    }
+
+    fn repro_base_config() -> UnitCandidateConfig {
+        use crate::transform::place_and_route::local_placer::{
+            InputPlacementStrategy, LocalPlacerConfig, NotRouteStrategy, PlacementSamplingPolicy,
+            TorchPlacementStrategy,
+        };
+        use crate::transform::place_and_route::sampling::SamplingPolicy;
+        let local_config = LocalPlacerConfig {
+            random_seed: 42,
+            greedy_input_generation: true,
+            input_placement_strategy: InputPlacementStrategy::Boundary,
+            input_candidate_limit: None,
+            step_sampling_policy: SamplingPolicy::Random(32),
+            placement_sampling_policy: PlacementSamplingPolicy::StepPolicy,
+            leak_sampling: false,
+            route_torch_directly: true,
+            materialize_outputs: false,
+            torch_placement_strategy: TorchPlacementStrategy::DirectOnly,
+            not_route_strategy: NotRouteStrategy::DirectAndRedstone,
+            max_not_route_step: 6,
+            not_route_step_sampling_policy: SamplingPolicy::Random(32),
+            max_route_step: 8,
+            route_step_sampling_policy: SamplingPolicy::Random(32),
+        };
+        UnitCandidateConfig {
+            dim: crate::world::position::DimSize(16, 16, 6),
+            local_config,
+            max_candidates: 2,
+            combinational_sampling_limit: Some(32),
+            ..Default::default()
+        }
+    }
+
+    fn run_reproducer(
+        label: &str,
+        nodes: Vec<crate::ir::RoutableNode>,
+        base: &UnitCandidateConfig,
+    ) -> eyre::Result<()> {
+        crate::perf::reset_for_tests();
+        let module = repro_leaf(label, nodes);
+        let config =
+            crate::transform::place_and_route::global_pnr::candidate_config_for_routable_child(
+                &module, base,
+            );
+        let candidates =
+            generate_routable_module_candidates_with_progress_label(&module, &config, None, None)?;
+        eprintln!(
+            "[repro] {label}: candidates={} truth_rejects={} port_rejects={}",
+            candidates.len(),
+            crate::perf::candidate_truth_rejects(),
+            crate::perf::candidate_port_rejects()
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "diagnostic: state_next truth-table reproducer"]
+    fn state_next_graph_candidate_truth_reproducer() -> eyre::Result<()> {
+        let base = repro_base_config();
+        run_reproducer("full", repro_state_next_nodes(22), &base)?;
+
+        let no_dead = repro_state_next_nodes(22)
+            .into_iter()
+            .filter(|node| node.id != 0 && node.id != 3)
+            .collect();
+        run_reproducer("no_dead", no_dead, &base)?;
+
+        run_reproducer("tail_n8", repro_state_next_nodes(8), &base)?;
+        run_reproducer("tail_n19", repro_state_next_nodes(19), &base)?;
+        run_reproducer("tail_n20", repro_state_next_nodes(20), &base)?;
+        run_reproducer("tail_n21", repro_state_next_nodes(21), &base)?;
+
+        let mut state_direct = repro_state_next_nodes(22);
+        for node in &mut state_direct {
+            if node.id == 20 {
+                node.inputs = vec![5];
+            }
+        }
+        run_reproducer("state_direct", state_direct, &base)?;
+
+        let mut n8_direct = repro_state_next_nodes(22);
+        for node in &mut n8_direct {
+            if node.id == 8 {
+                node.inputs = vec![1, 5];
+            }
+        }
+        run_reproducer("n8_direct", n8_direct, &base)?;
+        Ok(())
+    }
 }
