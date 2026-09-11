@@ -16,6 +16,7 @@ use crate::logic::LogicType;
 use crate::output::{OutputEndpoint, PlacedWorld};
 use crate::sequential::layout::SequentialMacro;
 use crate::sequential::{SequentialPrimitive, SequentialType};
+use crate::transform::place_and_route::electrical_drc::{PinContract, PinRecord, PlacedAnalysis};
 use crate::transform::place_and_route::estimate::{bounding_box_of_positions, world_compact_cost};
 use crate::transform::place_and_route::place_bound::PropagateType;
 use crate::world::block::{Block, BlockKind, Direction};
@@ -281,6 +282,41 @@ impl LocalPlacer {
                 inputs: self.input_endpoints(&state),
                 outputs: self.output_endpoints(&state),
             }
+        })
+        .collect()
+    }
+
+    pub fn generate_with_analysis_and_input_constraints_progress(
+        &self,
+        dim: DimSize,
+        finish_step: Option<usize>,
+        input_constraints: &LocalPlacerInputConstraints,
+        progress_label: Option<&str>,
+    ) -> Vec<(PlacedWorld, PlacedAnalysis)> {
+        self.generate_queue(
+            dim,
+            finish_step,
+            None,
+            Some(input_constraints),
+            progress_label,
+        )
+        .into_iter()
+        .map(|(world, state)| {
+            if connectivity_debug_enabled() {
+                dump_connectivity(progress_label, &world, &state);
+            }
+            let analysis = PlacedAnalysis {
+                anchors: state.anchors().to_vec(),
+                pins: state.pins().to_vec(),
+            };
+            (
+                PlacedWorld {
+                    world,
+                    inputs: self.input_endpoints(&state),
+                    outputs: self.output_endpoints(&state),
+                },
+                analysis,
+            )
         })
         .collect()
     }
@@ -551,6 +587,7 @@ impl LocalPlacer {
                 if let Some(position) = state.node_position(node.id) {
                     let mut state = state.clone();
                     state.set_signal_footprint(node.id, [position]);
+                    state.record_anchor(node.id, position);
                     vec![(world, state)]
                 } else {
                     let constrained_positions = input_constraints
@@ -569,6 +606,7 @@ impl LocalPlacer {
                             let mut state = state.clone();
                             state.set_node_position(node.id, position);
                             state.set_signal_footprint(node.id, [position]);
+                            state.record_anchor(node.id, position);
                             (world, state)
                         })
                         .collect()
@@ -581,6 +619,7 @@ impl LocalPlacer {
                     let mut state = state.clone();
                     state.set_node_position(node.id, position);
                     state.set_signal_footprint(node.id, [position]);
+                    state.record_anchor(node.id, position);
                     (world, state)
                 })
                 .collect(),
@@ -594,6 +633,7 @@ impl LocalPlacer {
                             node.id,
                             [Some(position), position.down()].into_iter().flatten(),
                         );
+                        state.record_anchor(node.id, position);
                         (world, state)
                     })
                     .collect()
@@ -613,12 +653,21 @@ impl LocalPlacer {
                     .map(|(world, position)| {
                         let mut state = state.clone();
                         state.set_node_position(node.id, position);
+                        let support = position.walk(world[position].direction);
                         state.set_signal_footprint(
                             node.id,
-                            [Some(position), position.walk(world[position].direction)]
-                                .into_iter()
-                                .flatten(),
+                            [Some(position), support].into_iter().flatten(),
                         );
+                        state.record_anchor(node.id, position);
+                        if let Some(support) = support {
+                            state.record_pin(PinRecord {
+                                node: node.id,
+                                position: support,
+                                contract: PinContract::Single {
+                                    expected_net: node.inputs[0],
+                                },
+                            });
+                        }
                         (world, state)
                     })
                     .collect(),
@@ -668,6 +717,14 @@ impl LocalPlacer {
                                         node.id,
                                         [Some(position), position.down()].into_iter().flatten(),
                                     );
+                                    state.record_anchor(node.id, position);
+                                    state.record_pin(PinRecord {
+                                        node: node.id,
+                                        position,
+                                        contract: PinContract::Merge {
+                                            input_nets: node.inputs.clone(),
+                                        },
+                                    });
                                     (candidate_world.clone(), state)
                                 })
                                 .collect_vec()

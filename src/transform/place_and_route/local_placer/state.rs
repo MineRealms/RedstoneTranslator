@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Index;
 
 use crate::graph::GraphNodeId;
+use crate::transform::place_and_route::electrical_drc::PinRecord;
 use crate::world::position::Position;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -14,6 +15,8 @@ pub(super) enum PlacementEndpoint {
 pub(super) struct PlacementState {
     positions: HashMap<PlacementEndpoint, Position>,
     signal_footprints: HashMap<GraphNodeId, HashSet<Position>>,
+    anchors: Vec<(GraphNodeId, Position)>,
+    pins: Vec<PinRecord>,
 }
 
 impl PlacementState {
@@ -103,6 +106,22 @@ impl PlacementState {
     ) {
         self.signal_footprints
             .insert(node_id, positions.into_iter().collect());
+    }
+
+    pub(super) fn record_anchor(&mut self, node_id: GraphNodeId, position: Position) {
+        self.anchors.push((node_id, position));
+    }
+
+    pub(super) fn record_pin(&mut self, pin: PinRecord) {
+        self.pins.push(pin);
+    }
+
+    pub(super) fn anchors(&self) -> &[(GraphNodeId, Position)] {
+        &self.anchors
+    }
+
+    pub(super) fn pins(&self) -> &[PinRecord] {
+        &self.pins
     }
 }
 

@@ -211,7 +211,7 @@ fn generate_unit_candidates(
     let graph = LogicGraph { graph }.prepare_place()?;
     let placer = LocalPlacer::new(graph.clone(), config.local_config)?;
 
-    let placed = placer.generate_with_outputs_and_input_constraints_progress(
+    let placed = placer.generate_with_analysis_and_input_constraints_progress(
         config.dim,
         None,
         &config.input_constraints,
@@ -239,9 +239,22 @@ fn generate_unit_candidates(
     // the extra truth-table validation work small.
     let pool_limit = config.max_candidates.saturating_mul(4).clamp(1, 64);
     let mut candidates = Vec::new();
-    for placed in placed {
+    for (placed, analysis) in placed {
         if candidates.len() >= pool_limit {
             break;
+        }
+        let drc_violations =
+            crate::transform::place_and_route::electrical_drc::analyze(&placed.world, &analysis);
+        if !drc_violations.is_empty() {
+            for violation in &drc_violations {
+                crate::perf::note_candidate_drc_violation();
+                if peca_debug_enabled() {
+                    eprintln!(
+                        "[peca] {module_name} node={} pin={:?} reason={:?} drivers={:?}",
+                        violation.node, violation.position, violation.reason, violation.drivers
+                    );
+                }
+            }
         }
         if validate_truth_table && !candidate_matches_truth_table(&graph, &placed)? {
             crate::perf::note_candidate_truth_reject();
@@ -284,6 +297,20 @@ fn truth_debug_enabled() -> bool {
         2 => false,
         _ => {
             let enabled = std::env::var_os("MCHDL_DEBUG_TRUTH_TABLE").is_some();
+            FLAG.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
+            enabled
+        }
+    }
+}
+
+fn peca_debug_enabled() -> bool {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    static FLAG: AtomicU8 = AtomicU8::new(0);
+    match FLAG.load(Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => {
+            let enabled = std::env::var_os("MCHDL_DEBUG_PECA").is_some();
             FLAG.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
             enabled
         }
@@ -1114,10 +1141,11 @@ mod tests {
         let candidates =
             generate_routable_module_candidates_with_progress_label(&module, &config, None, Some(label))?;
         eprintln!(
-            "[repro] {label}: candidates={} truth_rejects={} port_rejects={}",
+            "[repro] {label}: candidates={} truth_rejects={} port_rejects={} drc_violations={}",
             candidates.len(),
             crate::perf::candidate_truth_rejects(),
-            crate::perf::candidate_port_rejects()
+            crate::perf::candidate_port_rejects(),
+            crate::perf::candidate_drc_violations()
         );
         Ok(())
     }
