@@ -6,6 +6,13 @@
 **Related**: `performance_report.md` (current-state facts), `architecture.md`
 (CAD target), `roadmap.md` (milestones).
 
+**Execution status** (last update `53dd417`): Commits 1, 2, 3 (which folded in 4),
+and 5 are done; Commit 6 (verified macro library) and Commit 7 (validation clone
+reduction) are pending. The OOM wall is gone. The current blocker is the legacy
+local placer's placement quality and correctness (Section 4.1: `state_next`
+truth-table rejections, `full_adder` producing no placement); the next
+high-value step is fixing or replacing the leaf realizer.
+
 ## 1. Why
 
 Measured on the 32 GB host:
@@ -43,8 +50,9 @@ Goals:
 
 Non-goals (deferred until after this plan):
 
-- `World3D` copy-on-write or packed `Block` storage.
-- Physical/Electrical/Simulation layer split.
+- Packed `Block` storage and a Physical/Electrical/Simulation layer split.
+  (Copy-on-write was originally listed here; execution adopted it in Commit 3
+  as a contained substitute for the delta refactor.)
 - Replacing the local placer with placement-first search.
 - PathFinder, SA tuning, compression changes.
 
@@ -60,7 +68,7 @@ Non-goals (deferred until after this plan):
 | Verified macro library (fingerprints) | high | low-medium | 6 |
 | Validation/attempt clone reduction | medium | medium | 7 |
 | Candidate lazy materialization | medium | medium | later |
-| COW, packed blocks, layering | long-term | high | later |
+| COW (done, Commit 3), packed blocks, layering | long-term | high | later |
 
 ## 4. Execution tracker
 
@@ -171,7 +179,9 @@ Acceptance: attempt peak bytes drop; non-heavy suite green.
 
 ## 4.1 Active investigation — leaf candidate truth-table rejections (M0.6)
 
-**Status**: Phase 1 done, Phase 2 partially done · **Time box**: 30-60 minutes
+**Status**: Phase 1 done; exact reproducer and bisect done (M0.8, commit
+`53dd417`); next step is exposing `PlacementState` node positions to confirm
+the lost inversion, then fixing the routing.
 
 **Results so far**:
 

@@ -64,11 +64,16 @@ M3 placement, M4 negotiated congestion, M5 compression. The IR/mapping/frontend 
 preserved; the CAD track replaces only the physical search engine behind the
 `LayoutCandidate` boundary.
 
-M0-M5 are implemented; see the status log below for per-commit evidence. The
-next step is M0.5, the memory architecture refactor: both search frontiers
-(`PlacerQueue` and `RouteSearchState`) currently retain full `World3D`
-snapshots, which is the OOM bottleneck. The plan and execution tracker live in
-`docs/memory_refactor_plan.md`.
+M0-M5 are implemented; see the status log below for per-commit evidence. M0.5
+(the memory refactor) is in progress: the copy-on-write `World3D`, the local
+work budget, the frontier cap, and the adaptive box are done, which removed the
+OOM wall (see `docs/memory_refactor_plan.md`). The current blocker is the
+legacy local placer's placement quality and correctness: `state_next` produces
+32 candidates that all fail the truth-table check (minimal failing subgraph
+`Not(Not(state))`), and `full_adder` produces no placement even with a wide
+budget. The remaining M0.5 commits are the verified macro library and the
+validation/attempt clone reduction; the leaf-realizer fix is the next
+high-value work item.
 
 ### Step 1 - General mapper + target capabilities + mapping policy (DONE)
 
@@ -187,10 +192,10 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M4.2 | Negotiated-congestion loop: fold present overuse into history, rip up conflicting nets, reroute until clean or budget | 348 non-heavy tests |
 | CAD-M4.3 | Router post-pass behind `GlobalRoutingConfig::pathfinder`: contract-gated reroutes, RCIR/JSON/text persistence, manual full-flow harness | 353 non-heavy tests |
 | CAD-M4.4 | Simulator feedback: rejected reroutes add history penalties so later passes avoid the failing corridor | 354 non-heavy tests |
-| CAD-M5.0 | Compression ladder: descending box iteration, acceptance bookkeeping, generated box-intent integration with the PnR flow | 359 non-heavy tests |
-| CAD-M5.1 | CLI `--compress` wiring for Verilog, Logical RCIR, and Routable RCIR inputs (composite tops; replaces `--intent`) | 359 non-heavy tests |
+| CAD-M5.0 | Compression ladder: descending box iteration, acceptance bookkeeping, generated box-intent integration with the PnR flow | 362 non-heavy tests |
+| CAD-M5.1 | CLI `--compress` wiring for Verilog, Logical RCIR, and Routable RCIR inputs (composite tops; replaces `--intent`) | 362 non-heavy tests |
 | CAD-perf-report | `docs/performance_report.md`: memory/compile-performance architecture snapshot for external review | - |
-| CAD-M0.5 | Memory architecture refactor plan and execution tracker (`docs/memory_refactor_plan.md`); not started | planned |
+| CAD-M0.5 | Memory architecture refactor (`docs/memory_refactor_plan.md`): Commits 1, 2, 3, 5 done; Commits 6 (macro library) and 7 (validation clones) pending | 362 non-heavy tests |
 | CAD-M0.5.1 | `perf` module: world-clone counters, stage guards, RSS sampling, memory budget + `--memory-budget-mb`; `not_chain` shows 47,660 clones / 4.1 GB clone bytes | 362 non-heavy tests |
 | CAD-M0.5.2 | Adaptive annealed box (volume-derived, no 64 clamp) and compression ladder now shrinks until failure and keeps the smallest valid box | 362 non-heavy tests |
 | CAD-M0.5.3 | Copy-on-write `World3D` (per-layer `Arc`): `not_chain` peak RSS 265→58 MiB, candidate prep 394→153 ms, suite 7.3→3.2 s | 362 non-heavy tests |
@@ -210,7 +215,10 @@ excluded on this machine for memory reasons and must be run on a larger box.
   verifier round-trips on constant designs are unavailable.
 - One combinational leaf per state cell before partitioning; shared
   sub-cones are duplicated across state cells.
-- Local placer is still the scalability bottleneck (40-node leaves, expensive
-  search); Step 2 targets exactly this.
+- Local placer is still the scalability and correctness bottleneck: 40-node
+  leaves are expensive, `full_adder` places nothing even with a wide budget,
+  and `state_next` produces 32 candidates that all fail the truth-table check
+  (minimal failing subgraph `Not(Not(state))`, M0.8). Fixing or replacing the
+  leaf realizer is the next high-value step.
 - Global PnR only supports leaf children.
 - `Piston` is a stub across NBT export and the simulator.

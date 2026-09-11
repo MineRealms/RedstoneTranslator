@@ -39,7 +39,21 @@ Full-flow PnR benchmark tests (`benchmark_pnr_baseline`, `benchmark_placement_en
 `MCHDL_PERF=1` prints per-stage world-clone counts, cloned bytes, and RSS, plus
 a final summary. `--memory-budget-mb <N>` turns the budget into a clear error
 instead of an OOM abort. The counters are always active (two relaxed atomic
-adds per `World3D` clone). `MCHDL_DEBUG_TRUTH_TABLE=1` prints the first
-candidate truth-table mismatch (mask, input/output positions, expected vs
-actual) and dumps the leaf graph once per process; `--placement-engine
-legacy|annealed` selects the global placement engine.
+adds per `World3D` clone). `--placement-engine legacy|annealed` selects the
+global placement engine.
+
+Local search limits (deterministic; exceeding one reports an error):
+`MCHDL_FRONTIER_CAP` (default 16,384 frontier entries per step) and
+`MCHDL_LOCAL_CLONE_LIMIT` (default 10M `World3D` clones per local search).
+
+Debug diagnostics (one-line summaries, off by default):
+
+- `MCHDL_DEBUG_TRUTH_TABLE=1`: first candidate truth-table mismatch (mask,
+  positions, expected vs actual) and a one-time leaf graph dump.
+- `MCHDL_DEBUG_ANNEALED=1`: annealed placement attempts and box decisions.
+- `MCHDL_DEBUG_PLACEMENT=1`: global placement macro positions and cost.
+- `MCHDL_DEBUG_INPUT_SWITCH=1`: external input switch construction.
+
+The ignored test `state_next_graph_candidate_truth_reproducer`
+(`global_pnr/candidate.rs`) reproduces the `state_next` truth-table rejection;
+run it with `--ignored --nocapture` when working on the leaf realizer.

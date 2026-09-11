@@ -41,3 +41,19 @@ cargo test --release counter_module_generates_world_from_child_layout_candidates
 Library consumers are responsible for installing and configuring their own
 subscriber. The compiler CLI installs a formatted subscriber whose default
 level is `info`.
+
+## Performance and debug environment variables
+
+These are separate from `RUST_LOG`; they print one-line diagnostics or counters
+to stderr and are documented in `AGENTS.md` and `performance_report.md`.
+
+| Variable | Effect |
+| --- | --- |
+| `MCHDL_PERF=1` | Per-stage world-clone counts, cloned bytes, RSS, final summary |
+| `MCHDL_DEBUG_TRUTH_TABLE=1` | First candidate truth-table mismatch plus a leaf graph dump |
+| `MCHDL_DEBUG_ANNEALED=1` | Annealed placement attempts and box decisions |
+| `MCHDL_DEBUG_PLACEMENT=1` | Global placement macro positions and cost |
+| `MCHDL_DEBUG_INPUT_SWITCH=1` | External input switch construction |
+| `MCHDL_BENCH=<name>` | Run one manual full-flow benchmark per process |
+| `MCHDL_FRONTIER_CAP=<N>` | Local search frontier cap per step (default 16,384) |
+| `MCHDL_LOCAL_CLONE_LIMIT=<N>` | Local search `World3D` clone limit (default 10M) |

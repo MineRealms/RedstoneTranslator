@@ -1,6 +1,6 @@
 # Project Status Report
 
-> Branch: `cad-refactor` · Base commit: `15294b3` · Last update: `f99f204` (M0.5 plan)
+> Branch: `cad-refactor` · Base commit: `15294b3` · Last update: `53dd417` (M0.8)
 > Date: 2026-09-10
 >
 > This report is the hand-off snapshot before the CAD-style placer refactor.
@@ -74,9 +74,9 @@
 
 ### 2.4 Verification
 
-- The non-heavy suite currently passes 359 tests in release (single thread,
-  `--skip test_generate_component`; 8 heavy component tests skipped). The 311
-  figure in the original snapshot predates M2-M5.
+- The non-heavy suite currently passes 362 tests in release (single thread,
+  `--skip test_generate_component`; 8 heavy component tests and 10 diagnostic
+  tests skipped). The 311 figure in the original snapshot predates M2-M5.
 - FSM-class designs lower end to end to a `ResolvedPnrTopology`
   (`ir::mapping::tests::fsm_with_case_and_combinational_output_lowers_to_a_pnr_topology`).
 - Constant folding in `prepare_place`
@@ -114,7 +114,17 @@
   router post-pass, and simulator feedback behind
   `GlobalRoutingConfig::pathfinder` (M4); compression ladder and CLI
   `--compress` (M5). Per-commit evidence is in `docs/roadmap.md`.
-- **M0.5 (planned)**: memory architecture refactor; see
+- **M0.5 (in progress, commits `c7a75ed`..`53dd417`)**: memory instrumentation,
+  memory/work budgets, copy-on-write `World3D`, adaptive placement box, and
+  the multi-input sampling fix. `not_chain` peak RSS dropped from 265 to
+  58 MiB; `full_adder`/`fsm_1bit` now fail gracefully with a work-limit error
+  instead of an OOM abort; the annealed placement engine is routable on a
+  composite `andnot` chain (4.7 s / 49 MiB versus Legacy 16.6 s / 73 MiB).
+  Remaining: the verified macro library and validation/attempt clone
+  reduction. The current blocker is the legacy local placer's correctness:
+  `state_next` produces 32 candidates that all fail the truth-table check
+  (minimal failing subgraph `Not(Not(state))`), and `full_adder` produces no
+  placement even with a wide budget. Details in
   `docs/memory_refactor_plan.md`.
 
 ## 3. What is not complete

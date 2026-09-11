@@ -219,7 +219,7 @@ and sink positions, a strategy, and `additional_allowed_contacts` instead of a
 through `additional_allowed_contacts`; spatial facing exists on `MacroPin`
 (M3.0) but is not yet consumed by the router.
 
-### 6.3 Search state (as implemented, pending M0.5)
+### 6.3 Search state (as implemented, M0.5 copy-on-write)
 
 ```rust
 pub(crate) struct RouteSearchState {
@@ -235,8 +235,11 @@ pub(crate) struct RouteSearchState {
 
 `ElectricalState` was not introduced: the existing `PropagateType`
 (`Soft | Hard | Torch | Repeater`) remains the mode type. The retained `world`
-is the main memory risk; `docs/memory_refactor_plan.md` (M0.5, Commit 4)
-replaces it with a cumulative block delta plus one scratch world per pop.
+was the main memory risk; M0.5 made `World3D` copy-on-write (per-layer `Arc`),
+so a search state shares every unchanged layer and only written layers are
+copied. Measured on `not_chain`: peak RSS 265 to 58 MiB and 4.1 GB of logical
+clone bytes became 748 MB of actual layer copies. A separate delta refactor is
+no longer required; `docs/memory_refactor_plan.md` records the details.
 
 ### 6.4 Cost model
 
@@ -474,7 +477,7 @@ the remaining M5 work.
    flag; M4 added negotiated congestion behind the flag; M5 added the
    compression ladder and the CLI switch. The beam-search local placer and the
    legacy global placement remain the default path.
-5. **Tests stay green.** The non-heavy suite (359 tests at the M0.5 baseline)
+5. **Tests stay green.** The non-heavy suite (362 tests at the M0.5 baseline)
    and the existing snapshots must keep passing at every step.
 6. **Deprecation.** The beam-search local placer is removed only after the
    new flow matches or beats it on every benchmark and the ignored smoke
@@ -485,7 +488,7 @@ the remaining M5 work.
 The ordering below is deliberate: benchmarks first, then the router, then
 placement, then repair, then compression. Each milestone is a separate commit
 with its acceptance evidence. Status is tracked in `docs/roadmap.md`; the
-`Status` column below records the implementation state at the M0.5 baseline.
+`Status` column below records the current implementation state.
 
 | Milestone | Scope | Acceptance | Status |
 | --- | --- | --- | --- |
@@ -495,7 +498,7 @@ with its acceptance evidence. Status is tracked in `docs/roadmap.md`; the
 | M3 | Macro placement: deterministic seed + barycenter + SA refinement, behind a flag | One-bit FSM leaf places; full adder and dense OR cone place; old engine still default | Engine, benchmarks, and flow adapter done (`04b0898`..`12aa1e1`); full-flow evidence deferred (32 GB host) |
 | M4 | Coarse global routing + PathFinder negotiated congestion + conflict feedback | Two-bit FSM and dense OR cone place deterministically; snapshot replay stable | Congestion resources, search, loop, router post-pass, simulator feedback done (`a93ee77`..`e9e8ea0`); manual full-flow harness pending a larger host |
 | M5 | Compression ladder + new engine default | Compression reduces volume on benchmarks; old beam-search engine deprecated | Ladder and CLI done (`859e575`, `1a15e09`); benchmark evidence and deprecation pending |
-| M0.5 | Memory architecture refactor: instrumentation, search-state deltas, budgets, macro library | OOM becomes a budget error; frontier bytes drop by an order of magnitude; outputs byte-identical | Planned (`docs/memory_refactor_plan.md`) |
+| M0.5 | Memory architecture refactor: instrumentation, copy-on-write worlds, budgets, macro library | OOM becomes a budget error; frontier bytes drop by an order of magnitude; outputs byte-identical | In progress: Commits 1, 2, 3, 5 done; Commits 6 (macro library) and 7 (validation clones) pending (`docs/memory_refactor_plan.md`) |
 
 ## 14. Benchmarks and metrics
 
