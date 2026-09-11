@@ -499,6 +499,8 @@ with its acceptance evidence. Status is tracked in `docs/roadmap.md`; the
 | M4 | Coarse global routing + PathFinder negotiated congestion + conflict feedback | Two-bit FSM and dense OR cone place deterministically; snapshot replay stable | Congestion resources, search, loop, router post-pass, simulator feedback done (`a93ee77`..`e9e8ea0`); manual full-flow harness pending a larger host |
 | M5 | Compression ladder + new engine default | Compression reduces volume on benchmarks; old beam-search engine deprecated | Ladder and CLI done (`859e575`, `1a15e09`); benchmark evidence and deprecation pending |
 | M0.5 | Memory architecture refactor: instrumentation, copy-on-write worlds, budgets, macro library | OOM becomes a budget error; frontier bytes drop by an order of magnitude; outputs byte-identical | In progress: Commits 1, 2, 3, 5 done; Commits 6 (macro library) and 7 (validation clones) pending (`docs/memory_refactor_plan.md`) |
+| M0.9 | Physical-connectivity trace (`MCHDL_DEBUG_CONNECTIVITY`) | Candidate endpoint/block dump enables the `state_next` root-cause confirmation | Done (`47da9b0`) |
+| M0.10 | PECA: shared electrical rules + pin provenance + pin contracts (`Single`/`Merge`/`Passive`) | Every NOT/repeater input pin has exactly the intended driver; OR taps carry both branches; reported before truth-table validation | In progress (`docs/electrical_connectivity_analysis.md`) |
 
 ## 14. Benchmarks and metrics
 

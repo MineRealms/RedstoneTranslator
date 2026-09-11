@@ -53,6 +53,10 @@ Debug diagnostics (one-line summaries, off by default):
 - `MCHDL_DEBUG_ANNEALED=1`: annealed placement attempts and box decisions.
 - `MCHDL_DEBUG_PLACEMENT=1`: global placement macro positions and cost.
 - `MCHDL_DEBUG_INPUT_SWITCH=1`: external input switch construction.
+- `MCHDL_DEBUG_CONNECTIVITY=1`: per-candidate physical dump (endpoint map,
+  signal footprints, non-air blocks) for the local placer.
+- `MCHDL_DEBUG_PECA=1`: PECA (physical electrical connectivity) violation
+  reports, printed before truth-table validation.
 
 The ignored test `state_next_graph_candidate_truth_reproducer`
 (`global_pnr/candidate.rs`) reproduces the `state_next` truth-table rejection;

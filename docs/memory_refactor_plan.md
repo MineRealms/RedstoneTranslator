@@ -191,21 +191,17 @@ the lost inversion, then fixing the routing.
   with no result. With the default changed to `Some(32)`, `a & ~b` compiles end
   to end in under a second (162 MiB peak), and `state_next` goes from OOM to 32
   candidates in 13.5 s at 20 MiB.
-- **Root cause B (localized)**: all 32 `state_next` candidates are rejected by
-  the truth-table check. An exact graph reproducer now lives in the ignored
-  test `state_next_graph_candidate_truth_reproducer`
-  (`global_pnr/candidate.rs`); it reproduces `candidates=0 truth_rejects=32`
-  with the same config as the smoke test. Bisect results: `tail_n8` (Or tail)
-  and `tail_n19` (Not of n8) pass; `tail_n20` (`Not(Not(state))` as the output)
-  and `tail_n21` fail with 32/32 rejects; `state_direct` and `n8_direct`
-  produce no placed worlds. The minimal failing subgraph is the double
-  inversion `state -> n16 -> n20` used as the output, and the failure mode
-  matches the second inversion being realized as a single inversion
-  (`n20 = ~state`): at `go=0,state=1` that yields `n22=1` where the expected
-  value is 0, exactly the printed mismatch. Next step: expose the local
-  placer's node positions (`PlacementState`) to confirm that the second
-  inversion's support is powered by the `state` input instead of `n16`, then
-  fix the routing.
+- **Root cause B (confirmed, M0.9)**: all 32 `state_next` candidates are rejected by
+  the truth-table check. The physical-connectivity trace (`MCHDL_DEBUG_CONNECTIVITY=1`)
+  shows why: the second inverter's input pin (support cobble at `(0,4,1)`) is
+  adjacent to both the `state` input switch `(0,5,1)` and the `n16` torch
+  `(1,4,1)`. The simulator counts an adjacent switch as a cobble power source,
+  and a torch turns off when its support is powered, so the pin is driven by
+  `state | ~state = 1` and the output is stuck low — exactly the observed
+  `mask=10` mismatch. The defect is a missing electrical-exclusivity check, not
+  a routing reachability bug. The fix is the PECA layer
+  (`docs/electrical_connectivity_analysis.md`, M0.10); a minimal reproducer and
+  bisect live in `state_next_graph_candidate_truth_reproducer`.
 - **Limitation (root cause C)**: `full_adder` (27 prepared nodes) produces zero
   placements even with `combinational_sampling_limit = 128` and a 40M clone
   limit; the legacy local placer cannot realize that cone.

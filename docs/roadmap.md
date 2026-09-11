@@ -67,13 +67,14 @@ preserved; the CAD track replaces only the physical search engine behind the
 M0-M5 are implemented; see the status log below for per-commit evidence. M0.5
 (the memory refactor) is in progress: the copy-on-write `World3D`, the local
 work budget, the frontier cap, and the adaptive box are done, which removed the
-OOM wall (see `docs/memory_refactor_plan.md`). The current blocker is the
-legacy local placer's placement quality and correctness: `state_next` produces
-32 candidates that all fail the truth-table check (minimal failing subgraph
-`Not(Not(state))`), and `full_adder` produces no placement even with a wide
-budget. The remaining M0.5 commits are the verified macro library and the
-validation/attempt clone reduction; the leaf-realizer fix is the next
-high-value work item.
+OOM wall (see `docs/memory_refactor_plan.md`). The `state_next` truth-table
+rejection is now explained and confirmed as a missing electrical-exclusivity
+check: a NOT input pin (support cobble) was placed adjacent to a foreign power
+source, so the pin is driven by `state | ~state = 1`. The fix is a physical
+electrical connectivity layer (PECA, `docs/electrical_connectivity_analysis.md`,
+M0.10), not a one-off placer patch. The remaining M0.5 commits are the verified
+macro library and the validation/attempt clone reduction; `full_adder` is still
+unplaceable by the legacy placer.
 
 ### Step 1 - General mapper + target capabilities + mapping policy (DONE)
 
@@ -203,6 +204,8 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M0.6 | Truth-table rejection diagnosis: fixed the multi-input sampling explosion (`Some(32)` default; `a & ~b` now compiles); `state_next` still 32/32 truth rejects; `full_adder` unplaceable; Annealed composite reaches routing but fails | 362 non-heavy tests |
 | CAD-M0.7 | Annealed routability: spacing/pin-access costs, 4-cell margin, 6-cell channels, multi-seed attempts; composite `andnot` chain routes in 4.7 s / 49 MiB vs Legacy 16.6 s / 73 MiB | 362 non-heavy tests |
 | CAD-M0.8 | `state_next` truth-rejection reproducer and bisect: minimal failing subgraph is `Not(Not(state))`; failure matches a lost inversion | 362 non-heavy tests |
+| CAD-M0.9 | Physical-connectivity trace (`MCHDL_DEBUG_CONNECTIVITY`): per-candidate endpoint map, signal footprints, and block dump; reproducer labels each variant | 362 non-heavy tests |
+| CAD-M0.10a | PECA report-only: shared `world/electrical.rs` rules, pin/terminal provenance from the local placer, component extraction, `Single`/`Merge`/`Passive` contracts | 362 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

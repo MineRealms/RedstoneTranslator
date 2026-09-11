@@ -121,11 +121,12 @@
   instead of an OOM abort; the annealed placement engine is routable on a
   composite `andnot` chain (4.7 s / 49 MiB versus Legacy 16.6 s / 73 MiB).
   Remaining: the verified macro library and validation/attempt clone
-  reduction. The current blocker is the legacy local placer's correctness:
-  `state_next` produces 32 candidates that all fail the truth-table check
-  (minimal failing subgraph `Not(Not(state))`), and `full_adder` produces no
-  placement even with a wide budget. Details in
-  `docs/memory_refactor_plan.md`.
+  reduction. Details in `docs/memory_refactor_plan.md`.
+- **M0.9-M0.10 (in progress)**: the `state_next` truth-table rejection is
+  confirmed as a missing electrical-exclusivity check (a NOT input pin placed
+  adjacent to a foreign power source). The fix is the PECA layer
+  (`docs/electrical_connectivity_analysis.md`), not a one-off placer patch.
+  `full_adder` still produces no placement even with a wide budget.
 
 ## 3. What is not complete
 
