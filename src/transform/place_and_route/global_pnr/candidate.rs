@@ -1112,7 +1112,7 @@ mod tests {
                 &module, base,
             );
         let candidates =
-            generate_routable_module_candidates_with_progress_label(&module, &config, None, None)?;
+            generate_routable_module_candidates_with_progress_label(&module, &config, None, Some(label))?;
         eprintln!(
             "[repro] {label}: candidates={} truth_rejects={} port_rejects={}",
             candidates.len(),

@@ -59,6 +59,53 @@ pub struct LocalPlacer {
 
 type PlacerQueue = Vec<(World3D, PlacementState)>;
 
+fn connectivity_debug_enabled() -> bool {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    static FLAG: AtomicU8 = AtomicU8::new(0);
+    match FLAG.load(Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => {
+            let enabled = std::env::var_os("MCHDL_DEBUG_CONNECTIVITY").is_some();
+            FLAG.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
+            enabled
+        }
+    }
+}
+
+fn dump_connectivity(label: Option<&str>, world: &World3D, state: &PlacementState) {
+    eprintln!("[conn] === {} ===", label.unwrap_or("<leaf>"));
+    for (endpoint, position) in state.endpoint_positions() {
+        let block = &world[position];
+        eprintln!(
+            "[conn] endpoint {:?} pos={:?} kind={:?} dir={:?} powered={}",
+            endpoint,
+            position,
+            block.kind,
+            block.direction,
+            block.kind.is_powered()
+        );
+    }
+    for (node_id, positions) in state.signal_footprints() {
+        eprintln!("[conn] net node={node_id} positions={positions:?}");
+    }
+    let mut blocks = world
+        .iter_block()
+        .into_iter()
+        .filter(|(_, block)| !block.kind.is_air())
+        .collect::<Vec<_>>();
+    blocks.sort_by_key(|(position, _)| (position.2, position.1, position.0));
+    for (position, block) in blocks {
+        eprintln!(
+            "[conn] block {:?} kind={:?} dir={:?} powered={}",
+            position,
+            block.kind,
+            block.direction,
+            block.kind.is_powered()
+        );
+    }
+}
+
 const STEP_SAMPLE_SCOPE: u64 = 1;
 const RANKED_RANDOM_TAIL_SAMPLE_SCOPE: u64 = 2;
 const LEAK_SAMPLING_QUEUE_THRESHOLD: usize = 10_000;
@@ -225,10 +272,15 @@ impl LocalPlacer {
             progress_label,
         )
         .into_iter()
-        .map(|(world, state)| PlacedWorld {
-            world,
-            inputs: self.input_endpoints(&state),
-            outputs: self.output_endpoints(&state),
+        .map(|(world, state)| {
+            if connectivity_debug_enabled() {
+                dump_connectivity(progress_label, &world, &state);
+            }
+            PlacedWorld {
+                world,
+                inputs: self.input_endpoints(&state),
+                outputs: self.output_endpoints(&state),
+            }
         })
         .collect()
     }
