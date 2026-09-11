@@ -193,6 +193,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M0.5 | Memory architecture refactor plan and execution tracker (`docs/memory_refactor_plan.md`); not started | planned |
 | CAD-M0.5.1 | `perf` module: world-clone counters, stage guards, RSS sampling, memory budget + `--memory-budget-mb`; `not_chain` shows 47,660 clones / 4.1 GB clone bytes | 362 non-heavy tests |
 | CAD-M0.5.2 | Adaptive annealed box (volume-derived, no 64 clamp) and compression ladder now shrinks until failure and keeps the smallest valid box | 362 non-heavy tests |
+| CAD-M0.5.3 | Copy-on-write `World3D` (per-layer `Arc`): `not_chain` peak RSS 265→58 MiB, candidate prep 394→153 ms, suite 7.3→3.2 s | 362 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

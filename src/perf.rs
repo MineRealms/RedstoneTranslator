@@ -16,6 +16,8 @@ static VERBOSE: AtomicBool = AtomicBool::new(false);
 static WORLD_CLONES: AtomicUsize = AtomicUsize::new(0);
 static WORLD_CLONE_BYTES: AtomicUsize = AtomicUsize::new(0);
 static WORLD_ALLOC_BYTES: AtomicUsize = AtomicUsize::new(0);
+static LAYER_COPIES: AtomicUsize = AtomicUsize::new(0);
+static LAYER_COPY_BYTES: AtomicUsize = AtomicUsize::new(0);
 static PEAK_RSS_BYTES: AtomicUsize = AtomicUsize::new(0);
 static BUDGET_BYTES: AtomicUsize = AtomicUsize::new(0);
 static BUDGET_EXCEEDED: AtomicBool = AtomicBool::new(false);
@@ -52,6 +54,22 @@ pub fn record_world_clone(size: DimSize) {
     WORLD_CLONE_BYTES.fetch_add(world_bytes(size), Ordering::Relaxed);
 }
 
+pub fn record_layer_copy(blocks: usize) {
+    LAYER_COPIES.fetch_add(1, Ordering::Relaxed);
+    LAYER_COPY_BYTES.fetch_add(
+        blocks.saturating_mul(std::mem::size_of::<Block>()),
+        Ordering::Relaxed,
+    );
+}
+
+pub fn layer_copy_count() -> usize {
+    LAYER_COPIES.load(Ordering::Relaxed)
+}
+
+pub fn layer_copy_bytes() -> usize {
+    LAYER_COPY_BYTES.load(Ordering::Relaxed)
+}
+
 pub fn world_clone_count() -> usize {
     WORLD_CLONES.load(Ordering::Relaxed)
 }
@@ -81,6 +99,8 @@ pub fn reset_for_tests() {
     WORLD_CLONES.store(0, Ordering::Relaxed);
     WORLD_CLONE_BYTES.store(0, Ordering::Relaxed);
     WORLD_ALLOC_BYTES.store(0, Ordering::Relaxed);
+    LAYER_COPIES.store(0, Ordering::Relaxed);
+    LAYER_COPY_BYTES.store(0, Ordering::Relaxed);
     PEAK_RSS_BYTES.store(0, Ordering::Relaxed);
     BUDGET_BYTES.store(0, Ordering::Relaxed);
     BUDGET_EXCEEDED.store(false, Ordering::Relaxed);
@@ -129,6 +149,8 @@ pub struct StageGuard {
     clones: usize,
     clone_bytes: usize,
     alloc_bytes: usize,
+    layer_copies: usize,
+    layer_copy_bytes: usize,
 }
 
 impl Drop for StageGuard {
@@ -140,7 +162,7 @@ impl Drop for StageGuard {
             .map(|bytes| format!("{} MiB", bytes >> 20))
             .unwrap_or_else(|| "n/a".to_owned());
         eprintln!(
-            "[perf] {:<22} {:>9.1}ms clones=+{:<8} clone_bytes=+{:<12} alloc_bytes=+{:<12} rss={}",
+            "[perf] {:<22} {:>9.1}ms clones=+{:<8} clone_bytes=+{:<12} layer_copies=+{:<8} layer_copy_bytes=+{:<12} alloc_bytes=+{:<12} rss={}",
             self.name,
             self.started.elapsed().as_secs_f64() * 1000.0,
             WORLD_CLONES
@@ -149,6 +171,12 @@ impl Drop for StageGuard {
             WORLD_CLONE_BYTES
                 .load(Ordering::Relaxed)
                 .saturating_sub(self.clone_bytes),
+            LAYER_COPIES
+                .load(Ordering::Relaxed)
+                .saturating_sub(self.layer_copies),
+            LAYER_COPY_BYTES
+                .load(Ordering::Relaxed)
+                .saturating_sub(self.layer_copy_bytes),
             WORLD_ALLOC_BYTES
                 .load(Ordering::Relaxed)
                 .saturating_sub(self.alloc_bytes),
@@ -164,6 +192,8 @@ pub fn stage(name: &'static str) -> StageGuard {
         clones: WORLD_CLONES.load(Ordering::Relaxed),
         clone_bytes: WORLD_CLONE_BYTES.load(Ordering::Relaxed),
         alloc_bytes: WORLD_ALLOC_BYTES.load(Ordering::Relaxed),
+        layer_copies: LAYER_COPIES.load(Ordering::Relaxed),
+        layer_copy_bytes: LAYER_COPY_BYTES.load(Ordering::Relaxed),
     }
 }
 
@@ -175,9 +205,11 @@ pub fn print_summary_if_enabled() {
         .map(|bytes| format!("{} MiB", bytes >> 20))
         .unwrap_or_else(|| "n/a".to_owned());
     eprintln!(
-        "[perf] summary clones={} clone_bytes={} alloc_bytes={} peak_rss={} budget={} exceeded={}",
+        "[perf] summary clones={} clone_bytes={} layer_copies={} layer_copy_bytes={} alloc_bytes={} peak_rss={} budget={} exceeded={}",
         world_clone_count(),
         world_clone_bytes(),
+        layer_copy_count(),
+        layer_copy_bytes(),
         world_alloc_bytes(),
         rss,
         budget_bytes() >> 20,

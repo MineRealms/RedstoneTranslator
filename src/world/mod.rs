@@ -2,6 +2,7 @@ use std::cmp;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::ops::{Index, IndexMut};
+use std::sync::Arc;
 
 use block::{Block, BlockKind, Direction, RedstoneState};
 use itertools::Itertools;
@@ -30,8 +31,9 @@ impl World {
 #[derive(Default)]
 pub struct World3D {
     pub size: DimSize,
-    // z, y, z
-    pub map: Vec<Vec<Vec<Block>>>,
+    /// z -> flat layer (`y * size.0 + x`). Layers are shared copy-on-write, so
+    /// a clone is cheap and only written layers are duplicated.
+    pub map: Vec<Arc<Vec<Block>>>,
 }
 
 impl Clone for World3D {
@@ -47,19 +49,21 @@ impl Clone for World3D {
 impl World3D {
     pub fn new(size: DimSize) -> Self {
         crate::perf::record_world_alloc(size);
+        let layer_len = size.0.saturating_mul(size.1);
         Self {
             size,
-            map: vec![vec![vec![Block::default(); size.0]; size.1]; size.2],
+            map: (0..size.2)
+                .map(|_| Arc::new(vec![Block::default(); layer_len]))
+                .collect(),
         }
     }
 
     pub fn iter_pos(&self) -> Vec<Position> {
         let mut result = Vec::new();
-        let (z, y, x) = (self.map.len(), self.map[0].len(), self.map[0][0].len());
 
-        for z in 0..z {
-            for y in 0..y {
-                for x in 0..x {
+        for z in 0..self.size.2 {
+            for y in 0..self.size.1 {
+                for x in 0..self.size.0 {
                     result.push(Position(x, y, z));
                 }
             }
@@ -218,23 +222,21 @@ impl<'a> From<&'a World> for World3D {
             block_map.insert(block.0.index(&value.size), &block.1);
         }
 
-        let map: Vec<Vec<Vec<Block>>> = (0..value.size.2)
-            .map(|z| {
-                (0..value.size.1)
-                    .map(|y| {
-                        (0..value.size.0)
-                            .map(|x| {
-                                let pos = PositionIndex(
-                                    x + y * value.size.0 + z * value.size.0 * value.size.1,
-                                );
-
-                                block_map.get(&pos).map(|&&block| block).unwrap_or_default()
-                            })
-                            .collect()
-                    })
-                    .collect()
-            })
-            .collect();
+        let width = value.size.0;
+        let height = value.size.1;
+        let mut map = Vec::with_capacity(value.size.2);
+        for z in 0..value.size.2 {
+            let mut layer = vec![Block::default(); width.saturating_mul(height)];
+            for y in 0..height {
+                for x in 0..width {
+                    let pos = PositionIndex(x + y * width + z * width * height);
+                    if let Some(&&block) = block_map.get(&pos) {
+                        layer[y * width + x] = block;
+                    }
+                }
+            }
+            map.push(Arc::new(layer));
+        }
 
         Self {
             size: value.size,
@@ -256,22 +258,29 @@ impl Index<Position> for World3D {
     type Output = Block;
 
     fn index(&self, index: Position) -> &Self::Output {
-        &self.map[index.2][index.1][index.0]
+        &self.map[index.2][index.1 * self.size.0 + index.0]
     }
 }
 
 impl IndexMut<Position> for World3D {
     fn index_mut(&mut self, index: Position) -> &mut Self::Output {
-        &mut self.map[index.2][index.1][index.0]
+        let layer = &mut self.map[index.2];
+        if Arc::get_mut(layer).is_none() {
+            crate::perf::record_layer_copy(self.size.0.saturating_mul(self.size.1));
+        }
+        let layer = Arc::make_mut(layer);
+        &mut layer[index.1 * self.size.0 + index.0]
     }
 }
 
 impl Debug for World3D {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (height, plane) in self.map.iter().enumerate().rev() {
+        let width = self.size.0;
+        for (height, layer) in self.map.iter().enumerate().rev() {
             writeln!(f, "h={height:?}")?;
 
-            for row in plane.iter().rev() {
+            for y in (0..self.size.1).rev() {
+                let row = &layer[y * width..(y + 1) * width];
                 writeln!(
                     f,
                     "  {}",

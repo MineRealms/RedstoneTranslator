@@ -2127,7 +2127,7 @@ mod test {
         let mut sim = Simulator::new(&mock_world, DEFAULT_TRACE_LIMIT);
         sim.world.initialize_redstone_states();
 
-        let BlockKind::Redstone { state, .. } = sim.world.map[0][1][1].kind else {
+        let BlockKind::Redstone { state, .. } = sim.world[Position(1, 1, 0)].kind else {
             unreachable!();
         };
 
@@ -2170,7 +2170,7 @@ mod test {
 
         let sim = Simulator::from(&mock_world).unwrap();
 
-        let BlockKind::Redstone { on_count, .. } = sim.world.map[0][1][1].kind else {
+        let BlockKind::Redstone { on_count, .. } = sim.world[Position(1, 1, 0)].kind else {
             unreachable!();
         };
 
@@ -2219,7 +2219,7 @@ mod test {
         let BlockKind::Cobble {
             on_count,
             on_base_count,
-        } = sim.world.map[0][1][1].kind
+        } = sim.world[Position(1, 1, 0)].kind
         else {
             unreachable!();
         };
@@ -2871,7 +2871,7 @@ mod test {
 
         sim.run().unwrap();
 
-        let BlockKind::Redstone { strength, .. } = sim.world.map[0][2][2].kind else {
+        let BlockKind::Redstone { strength, .. } = sim.world[Position(2, 2, 0)].kind else {
             unreachable!();
         };
 
@@ -3128,7 +3128,7 @@ mod test {
 
         sim.run().unwrap();
 
-        let BlockKind::Redstone { strength, .. } = sim.world.map[0][2][2].kind else {
+        let BlockKind::Redstone { strength, .. } = sim.world[Position(2, 2, 0)].kind else {
             unreachable!();
         };
 
@@ -3136,7 +3136,7 @@ mod test {
 
         sim.change_state(vec![(Position(0, 0, 0), false)]).unwrap();
 
-        let BlockKind::Redstone { strength, .. } = sim.world.map[0][2][2].kind else {
+        let BlockKind::Redstone { strength, .. } = sim.world[Position(2, 2, 0)].kind else {
             unreachable!();
         };
 
@@ -3216,7 +3216,7 @@ mod test {
 
         sim.run().unwrap();
 
-        let BlockKind::Redstone { strength, .. } = sim.world.map[0][4][1].kind else {
+        let BlockKind::Redstone { strength, .. } = sim.world[Position(1, 4, 0)].kind else {
             unreachable!();
         };
 
@@ -3225,7 +3225,7 @@ mod test {
         sim.change_state(vec![(Position(0, 0, 0), true), (Position(2, 0, 0), true)])
             .unwrap();
 
-        let BlockKind::Redstone { strength, .. } = sim.world.map[0][4][1].kind else {
+        let BlockKind::Redstone { strength, .. } = sim.world[Position(1, 4, 0)].kind else {
             unreachable!();
         };
 

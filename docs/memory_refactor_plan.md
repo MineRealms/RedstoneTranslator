@@ -100,27 +100,31 @@ Files: `global_pnr/annealed.rs`, `compression.rs`.
 Acceptance met: the annealed adapter no longer forces a 64-wide box; the
 ladder now actually compresses; non-heavy suite green (362 tests).
 
-### [ ] Commit 3 — refactor(local): placement queue world to delta
+### [x] Commit 3 — copy-on-write World3D (consolidates Commits 3 and 4)
 
-Scope: `PlacerQueue` entries store a cumulative block delta instead of
-`World3D`; materialize one scratch world per popped branch; keep electrical
-initialization semantics (`initialize_redstone_states` after materialization).
+Scope: `World3D` stores per-layer `Arc<Vec<Block>>`; `clone()` is an outer-vector
+copy plus Arc bumps, and `IndexMut` copies a layer only when it is shared. This
+achieves the delta-state goal (search entries no longer duplicate unchanged
+world data) for both the local placer queue and `RouteSearchState` with a
+single contained change, and outputs stay byte-identical by construction. New
+`perf` counters track actual layer copies separately from logical clone bytes.
 
-Files: `local_placer/{mod,state,routing,sequential/*}.rs`.
+Files: `src/world/mod.rs`, `src/world/simulator.rs` (test indexing),
+`src/perf.rs`.
 
-Acceptance: candidate output byte-identical to the baseline on snapshot tests;
-`full_adder` candidate generation completes within budget; non-heavy suite green.
+Measured on `not_chain` (smallest benchmark): peak RSS 265 MiB to 58 MiB,
+candidate preparation 394 ms to 153 ms, actual copied bytes 4.1 GB logical to
+748 MB of layer copies; the non-heavy suite drops from 7.3 s to 3.2 s and stays
+green (362 tests).
 
-### [ ] Commit 4 — refactor(router): route state world to delta
+Known gap: `full_adder` (27 prepared nodes) still exhausts memory because a
+single `do_step` expands a huge frontier before sampling; that is Commit 5.
 
-Scope: `RouteSearchState` stores a cumulative delta (the diff that
-`added_route_blocks` already computes); materialize one scratch world per pop for
-`detailed_router` calls and validation.
+### [x] Commit 4 — folded into Commit 3
 
-Files: `route_engine/{state,engine}.rs`.
-
-Acceptance: A* parity tests unchanged; existing router tests green; frontier
-bytes drop by the predicted factor.
+The route search state keeps its `world` field, but the field is now cheap to
+clone and shares unchanged layers, so the separate delta refactor is no longer
+required. Revisit only if routing frontiers still dominate after Commit 5.
 
 ### [ ] Commit 5 — perf(local): deterministic work budget and frontier cap
 
