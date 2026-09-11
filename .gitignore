@@ -9,3 +9,5 @@ tools/nbt-viewer/dist/
 tools/nbt-viewer/public/mcmeta/
 tools/nbt-viewer/public/wasm/
 *.snapshot/
+tools/nbt-viewer/dev.log
+tools/nbt-viewer/dev.err.log
