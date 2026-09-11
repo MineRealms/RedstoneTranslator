@@ -86,16 +86,19 @@ peak RSS 265 MiB. This confirms that even the smallest benchmark explodes
 through world cloning in the local placer, and that Commit 3 is the first big
 target.
 
-### [ ] Commit 2 — perf: adaptive initial box
+### [x] Commit 2 — perf: adaptive initial box
 
-Scope: stop clamping the annealed adapter to `shelf_width` 64; derive the box
-from total candidate volume plus a safety margin; start the compression ladder
-from the tight estimate and grow on failure.
+Scope: stop clamping the annealed placement box to `shelf_width` 64; derive it
+from the total candidate volume (with a floor at the largest macro footprint).
+Also fix the compression ladder semantics: it now shrinks until the first
+failure and keeps the last valid box, instead of returning the first success
+(which was the largest box). Starting the ladder from a volume estimate needs
+candidate sizes and is deferred to the candidate-streaming work.
 
 Files: `global_pnr/annealed.rs`, `compression.rs`.
 
-Acceptance: small designs start near their volume-derived box; non-heavy suite green;
-measured world bytes drop.
+Acceptance met: the annealed adapter no longer forces a 64-wide box; the
+ladder now actually compresses; non-heavy suite green (362 tests).
 
 ### [ ] Commit 3 — refactor(local): placement queue world to delta
 

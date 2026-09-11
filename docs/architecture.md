@@ -436,7 +436,7 @@ box ladder: 64x64x16 -> 56x56x14 -> 48x48x12 -> 40x40x10 -> 32x32x8 -> 24x24x6
 for box in ladder (descending):
     re-run placement/routing inside box
     validate (redstone checks + simulator)
-    keep the first (smallest) valid result
+    stop at the first failure and keep the last valid (smallest) result
 ```
 
 Compression is a loop around the flow, not a property of the placer. The
@@ -445,7 +445,7 @@ points) are the acceptance metrics. The ladder, not a single hard box, is the
 search domain.
 
 Implemented in `place_and_route::compression`: `compress` owns the descending
-iteration and acceptance bookkeeping, and
+iteration, stops at the first failure, and keeps the last valid (smallest) box;
 `place_and_route_with_compression` runs the full PnR flow once per box,
 constraining every top-level instance inside the box through a generated
 physical intent (`Inside` constraints over one region). The CLI exposes it as

@@ -1,9 +1,9 @@
 //! Compression ladder for the CAD flow (M5).
 //!
 //! Generate a valid circuit first, then shrink: try descending box sizes and
-//! keep the first (smallest) valid result. The ladder is a loop around the
-//! flow, not a property of the placer, so this module owns the iteration and
-//! acceptance bookkeeping while callers provide the per-box attempt.
+//! keep the smallest valid result. The ladder is a loop around the flow, not a
+//! property of the placer, so this module owns the iteration and acceptance
+//! bookkeeping while callers provide the per-box attempt.
 
 use std::collections::BTreeMap;
 
@@ -63,6 +63,7 @@ pub fn compress<T>(
     }
 
     let mut attempts = Vec::new();
+    let mut best: Option<(T, DimSize)> = None;
     let mut last_error = None;
     for &box_size in ladder {
         match attempt(box_size) {
@@ -72,11 +73,7 @@ pub fn compress<T>(
                     accepted: true,
                     error: None,
                 });
-                return Ok(CompressionResult {
-                    value,
-                    box_size,
-                    attempts,
-                });
+                best = Some((value, box_size));
             }
             Err(error) => {
                 attempts.push(CompressionAttempt {
@@ -85,11 +82,23 @@ pub fn compress<T>(
                     error: Some(error.to_string()),
                 });
                 last_error = Some(error);
+                // The ladder shrinks monotonically; once a box fails, smaller
+                // boxes are expected to fail as well.
+                break;
             }
         }
     }
 
-    Err(last_error.unwrap_or_else(|| eyre::eyre!("compression ladder produced no attempt")))
+    match best {
+        Some((value, box_size)) => Ok(CompressionResult {
+            value,
+            box_size,
+            attempts,
+        }),
+        None => {
+            Err(last_error.unwrap_or_else(|| eyre::eyre!("compression ladder produced no attempt")))
+        }
+    }
 }
 
 fn volume(size: DimSize) -> usize {
@@ -130,8 +139,8 @@ fn compression_intent(
 }
 
 /// Runs the full PnR flow once per box in the ladder, constraining every
-/// top-level instance inside the box, and returns the first (smallest) valid
-/// result.
+/// top-level instance inside the box, and returns the smallest valid result.
+/// The ladder is tried in descending order and stops at the first failure.
 pub fn place_and_route_with_compression(
     design: &RoutableDesign,
     ladder: &[DimSize],
@@ -196,30 +205,31 @@ mod tests {
     }
 
     #[test]
-    fn first_successful_box_wins() -> eyre::Result<()> {
+    fn compression_shrinks_until_failure() -> eyre::Result<()> {
         let ladder = [DimSize(64, 64, 16), DimSize(48, 48, 12), DimSize(32, 32, 8)];
         let mut tried = Vec::new();
 
         let result = compress(&ladder, |box_size| {
             tried.push(box_size);
-            if box_size == DimSize(48, 48, 12) {
-                Ok("placed")
-            } else {
+            if box_size == DimSize(32, 32, 8) {
                 eyre::bail!("does not fit")
+            } else {
+                Ok("placed")
             }
         })?;
 
         assert_eq!(result.value, "placed");
         assert_eq!(result.box_size, DimSize(48, 48, 12));
-        assert_eq!(tried, vec![ladder[0], ladder[1]]);
-        assert_eq!(result.attempts.len(), 2);
-        assert!(!result.attempts[0].accepted);
+        assert_eq!(tried, vec![ladder[0], ladder[1], ladder[2]]);
+        assert_eq!(result.attempts.len(), 3);
+        assert!(result.attempts[0].accepted);
         assert!(result.attempts[1].accepted);
+        assert!(!result.attempts[2].accepted);
         Ok(())
     }
 
     #[test]
-    fn all_boxes_failing_returns_the_last_error() {
+    fn first_failure_stops_the_ladder() {
         let ladder = [DimSize(64, 64, 16), DimSize(32, 32, 8)];
         let error = compress(&ladder, |box_size| {
             Err::<(), _>(eyre::eyre!("no fit at {:?}", box_size))
@@ -227,7 +237,7 @@ mod tests {
         .unwrap_err()
         .to_string();
 
-        assert!(error.contains("32"), "{error}");
+        assert!(error.contains("64"), "{error}");
     }
 
     #[test]

@@ -64,7 +64,14 @@ pub fn placement_candidates_annealed(
             candidate.bbox.width() * candidate.bbox.depth() * candidate.bbox.height()
         })
         .sum::<usize>();
-    let side = ((total_volume as f64).cbrt().ceil() as usize * 2).max(config.shelf_width.max(16));
+    let max_footprint = selected
+        .iter()
+        .map(|(_, candidate)| candidate.bbox.width().max(candidate.bbox.depth()))
+        .max()
+        .unwrap_or(1);
+    let side = ((total_volume as f64).cbrt().ceil() as usize * 2)
+        .max(max_footprint)
+        .max(4);
     let max_height = selected
         .iter()
         .map(|(_, candidate)| candidate.bbox.height())
