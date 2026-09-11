@@ -171,7 +171,34 @@ Acceptance: attempt peak bytes drop; non-heavy suite green.
 
 ## 4.1 Active investigation — leaf candidate truth-table rejections (M0.6)
 
-**Status**: next task · **Owner**: next session · **Time box**: 30-60 minutes
+**Status**: Phase 1 done, Phase 2 partially done · **Time box**: 30-60 minutes
+
+**Results so far**:
+
+- **Fixed (root cause A)**: the default `UnitCandidateConfig.combinational_sampling_limit`
+  was `None`, which left multi-input combinational children on `Random(512)`
+  step/route sampling. Even `assign y = a & ~b` burned the 10M clone work limit
+  with no result. With the default changed to `Some(32)`, `a & ~b` compiles end
+  to end in under a second (162 MiB peak), and `state_next` goes from OOM to 32
+  candidates in 13.5 s at 20 MiB.
+- **Open (root cause B)**: all 32 `state_next` candidates are rejected by the
+  truth-table check. The diagnostic prints `input_names=["go","state"]`,
+  expected `__next = [false,true,false,false]` (i.e. `go & ~state`), but the
+  physical world is powered at mask `go=0,state=1` where the expected value is
+  false, i.e. the realized function behaves like `go | state`. The 3-node
+  `a & ~b` graph passes, so the issue is specific to the larger graph shape
+  (fanout plus the double-inversion De Morgan chain). Next step: build the
+  exact graph from the dumped node list as a unit reproducer and bisect by
+  removing fanout/inversions until it passes.
+- **Limitation (root cause C)**: `full_adder` (27 prepared nodes) produces zero
+  placements even with `combinational_sampling_limit = 128` and a 40M clone
+  limit; the legacy local placer cannot realize that cone.
+- **New engine experiment**: a composite `andnot` chain (three instances) with
+  `--placement-engine annealed` now reaches routing after the box-retry fix,
+  but the route fails (`u1.y -> u2.a` unreachable), while the Legacy engine
+  compiles the same design in 16.6 s. The SA cost (HPWL, bbox, blocked pins,
+  overlap) has no routability or pin-access term, which matches the M3 design
+  note that escape/pin-access costs are still missing.
 
 **Context**: the M0.5 work removed the memory wall (COW `World3D`, work budget,
 frontier cap). The remaining wall is leaf placement quality/correctness. With
