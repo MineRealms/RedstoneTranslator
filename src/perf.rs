@@ -6,13 +6,13 @@
 //! working-set size, so a design that would exhaust memory fails with an error
 //! instead of aborting the process.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use crate::world::block::Block;
 use crate::world::position::DimSize;
 
-static VERBOSE: AtomicBool = AtomicBool::new(false);
+static VERBOSE: AtomicU8 = AtomicU8::new(0);
 static WORLD_CLONES: AtomicUsize = AtomicUsize::new(0);
 static WORLD_CLONE_BYTES: AtomicUsize = AtomicUsize::new(0);
 static WORLD_ALLOC_BYTES: AtomicUsize = AtomicUsize::new(0);
@@ -22,6 +22,8 @@ static PEAK_RSS_BYTES: AtomicUsize = AtomicUsize::new(0);
 static BUDGET_BYTES: AtomicUsize = AtomicUsize::new(0);
 static BUDGET_EXCEEDED: AtomicBool = AtomicBool::new(false);
 static WORK_EXCEEDED: AtomicBool = AtomicBool::new(false);
+static CANDIDATE_TRUTH_REJECTS: AtomicUsize = AtomicUsize::new(0);
+static CANDIDATE_PORT_REJECTS: AtomicUsize = AtomicUsize::new(0);
 
 /// Maximum number of local placement generations before the search gives up.
 /// A deterministic guard against the exponential local search; the error is
@@ -41,11 +43,19 @@ pub fn local_clone_limit() -> usize {
 }
 
 pub fn set_verbose(enabled: bool) {
-    VERBOSE.store(enabled, Ordering::Relaxed);
+    VERBOSE.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
 }
 
 pub fn verbose() -> bool {
-    VERBOSE.load(Ordering::Relaxed)
+    match VERBOSE.load(Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => {
+            let enabled = std::env::var_os("MCHDL_PERF").is_some();
+            VERBOSE.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
+            enabled
+        }
+    }
 }
 
 pub fn set_budget_mb(megabytes: usize) {
@@ -120,8 +130,24 @@ pub fn note_work_exceeded() {
     WORK_EXCEEDED.store(true, Ordering::Relaxed);
 }
 
+pub fn note_candidate_truth_reject() {
+    CANDIDATE_TRUTH_REJECTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn note_candidate_port_reject() {
+    CANDIDATE_PORT_REJECTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn candidate_truth_rejects() -> usize {
+    CANDIDATE_TRUTH_REJECTS.load(Ordering::Relaxed)
+}
+
+pub fn candidate_port_rejects() -> usize {
+    CANDIDATE_PORT_REJECTS.load(Ordering::Relaxed)
+}
+
 pub fn reset_for_tests() {
-    VERBOSE.store(false, Ordering::Relaxed);
+    VERBOSE.store(0, Ordering::Relaxed);
     WORLD_CLONES.store(0, Ordering::Relaxed);
     WORLD_CLONE_BYTES.store(0, Ordering::Relaxed);
     WORLD_ALLOC_BYTES.store(0, Ordering::Relaxed);
@@ -131,6 +157,8 @@ pub fn reset_for_tests() {
     BUDGET_BYTES.store(0, Ordering::Relaxed);
     BUDGET_EXCEEDED.store(false, Ordering::Relaxed);
     WORK_EXCEEDED.store(false, Ordering::Relaxed);
+    CANDIDATE_TRUTH_REJECTS.store(0, Ordering::Relaxed);
+    CANDIDATE_PORT_REJECTS.store(0, Ordering::Relaxed);
 }
 
 pub fn rss_bytes() -> Option<usize> {
@@ -232,12 +260,14 @@ pub fn print_summary_if_enabled() {
         .map(|bytes| format!("{} MiB", bytes >> 20))
         .unwrap_or_else(|| "n/a".to_owned());
     eprintln!(
-        "[perf] summary clones={} clone_bytes={} layer_copies={} layer_copy_bytes={} alloc_bytes={} peak_rss={} budget={} exceeded={}",
+        "[perf] summary clones={} clone_bytes={} layer_copies={} layer_copy_bytes={} alloc_bytes={} candidate_truth_rejects={} candidate_port_rejects={} peak_rss={} budget={} exceeded={}",
         world_clone_count(),
         world_clone_bytes(),
         layer_copy_count(),
         layer_copy_bytes(),
         world_alloc_bytes(),
+        candidate_truth_rejects(),
+        candidate_port_rejects(),
         rss,
         budget_bytes() >> 20,
         budget_exceeded()

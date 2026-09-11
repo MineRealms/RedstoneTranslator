@@ -143,10 +143,14 @@ Acceptance met: `full_adder` and `fsm_1bit` fail gracefully in about 66 s with
 
 Key finding: a wide-limit control run (`MCHDL_LOCAL_CLONE_LIMIT=60000000`,
 `MCHDL_FRONTIER_CAP=131072`, 16 GB budget) still produced zero candidates for
-the 13-node `state_next` cone after 429 s / 60M clones at only 2.4 GB RSS. The
-legacy local placer cannot realize these dense cones; the limits bound the
-damage, they are not the cause. The real fix is replacing the leaf realizer
-(verified macro library for repeated shapes plus the placement-first path).
+the 13-node `state_next` cone after 429 s / 60M clones at only 2.4 GB RSS. A
+second control with the tuned smoke-test config (sampling 32) produced 32
+candidates in 13.5 s at 21 MiB RSS, but **all 32 were rejected by the
+truth-table check** (`candidate_truth_rejects=32`, zero port rejects). The
+legacy local placer is therefore limited by placement quality/correctness, not
+memory; the limits bound the damage, they are not the cause. The real fix is
+replacing the leaf realizer (verified macro library for repeated shapes plus
+the placement-first path).
 
 ### [ ] Commit 6 — perf: verified macro library via fingerprints
 

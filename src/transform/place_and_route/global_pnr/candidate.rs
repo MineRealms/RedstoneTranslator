@@ -244,6 +244,7 @@ fn generate_unit_candidates(
             break;
         }
         if validate_truth_table && !candidate_matches_truth_table(&graph, &placed)? {
+            crate::perf::note_candidate_truth_reject();
             continue;
         }
         let (world, physical_ports) = switchless_candidate_layout(
@@ -256,6 +257,7 @@ fn generate_unit_candidates(
             &placed.outputs,
         );
         if !candidate_ports_cover_module_ports(&ports, &physical_ports) {
+            crate::perf::note_candidate_port_reject();
             continue;
         }
         let mut candidate =

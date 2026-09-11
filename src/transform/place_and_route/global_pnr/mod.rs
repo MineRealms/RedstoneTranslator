@@ -616,7 +616,14 @@ pub fn place_and_route_routable_design_with_visualization(
         crate::snapshot::emit_text("ir/routable.rcir", document.to_string())?;
         crate::snapshot::emit_json("ir/routable.json", design)?;
     }
-    let prepared = prepare_routable_design_for_global_pnr(design, &PnrPrepareConfig::from(config))?;
+    let prepared =
+        match prepare_routable_design_for_global_pnr(design, &PnrPrepareConfig::from(config)) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                crate::perf::print_summary_if_enabled();
+                return Err(error);
+            }
+        };
     let result = run_prepared_pnr_with_visualization(&prepared, config);
     crate::perf::print_summary_if_enabled();
     result
