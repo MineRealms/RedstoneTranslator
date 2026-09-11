@@ -210,7 +210,8 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M0.10a.2 | Confidence model: `Single` violations are `Certain`, `Merge` violations are `SimulationRequired`; only `Certain` will be enforced | 372 non-heavy tests |
 | CAD-M0.10b | PECA enforce `Single` (opt-in `MCHDL_PECA_ENFORCE=1`): `Certain` violations reject before the truth table (`drc_rejects=32`, `truth_rejects=0` on the reproducer); default-on pending generation-time avoidance | 372 non-heavy tests |
 | CAD-M0.12.0 | Shared electrical driver query: `world/electrical.rs` used by the simulator and PECA (`fa1d6db`) | 372 non-heavy tests |
-| CAD-M0.12.1 | Electrical Legality Filter interface freeze + report-only pre-route pin check (`PinId`/`PinPort`, `NetIndex`, `check_pin_before_route`) | in progress |
+| CAD-M0.12.1 | Electrical Legality Filter interface freeze + report-only pre-route pin check (`PinId`/`PinPort`, `NetIndex`, `check_pin_before_route`); 2014 pre-route violations detected before routing | 373 non-heavy tests |
+| CAD-M0.12.2 | Report-only driver-side check: a newly placed terminal must not drive an existing foreign pin; 1810 reports on the reproducer | 373 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

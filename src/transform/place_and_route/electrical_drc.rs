@@ -363,6 +363,45 @@ pub fn check_pin(world: &World3D, index: &NetIndex, pin: &PinRecord) -> DrcResul
     }
 }
 
+/// Check whether a newly placed terminal (torch, switch, redstone block,
+/// repeater) would power an existing foreign pin. This catches coupling that
+/// is introduced *after* the pin was placed (the reverse of `check_pin`).
+pub fn check_new_driver_against_pins(
+    world: &World3D,
+    new_net: GraphNodeId,
+    driver: Position,
+    pins: &[PinRecord],
+) -> DrcResult {
+    let mut violations = Vec::new();
+    for (target, _) in electrical::power_targets(world, driver) {
+        for pin in pins {
+            if pin.position != target {
+                continue;
+            }
+            let allowed = match &pin.contract {
+                PinContract::Single { expected_net } => *expected_net == new_net,
+                PinContract::Merge { input_nets } => input_nets.contains(&new_net),
+                PinContract::Passive => true,
+            };
+            if !allowed {
+                violations.push(Violation {
+                    pin: pin.id.clone(),
+                    position: pin.position,
+                    drivers: vec![(new_net, driver)],
+                    reason: ViolationReason::ExtraDriver,
+                    confidence: ConnectivityConfidence::Certain,
+                });
+            }
+        }
+    }
+
+    if violations.is_empty() {
+        DrcResult::Pass
+    } else {
+        DrcResult::Reject(violations)
+    }
+}
+
 pub fn analyze(world: &World3D, analysis: &PlacedAnalysis) -> Vec<Violation> {
     let index = NetIndex::build(world, &analysis.anchors);
     let mut violations = Vec::new();
@@ -710,5 +749,46 @@ mod tests {
         );
 
         assert!(analyze(&w, &a).is_empty());
+    }
+
+    /// A terminal placed after a pin must not drive it unless it is the
+    /// expected source (driver-side check).
+    #[test]
+    fn new_foreign_driver_hitting_an_existing_pin_is_reported() {
+        let support = Position(1, 3, 1);
+        let expected = Position(0, 3, 1);
+        let foreign = Position(2, 3, 1);
+
+        let w = world(vec![
+            (support, cobble()),
+            (expected, torch(Direction::North)),
+            (foreign, torch(Direction::North)),
+        ]);
+
+        let pin = PinRecord::new(
+            20,
+            PinPort::Index(0),
+            support,
+            PinContract::Single { expected_net: 16 },
+        );
+
+        assert_eq!(
+            check_new_driver_against_pins(&w, 16, expected, std::slice::from_ref(&pin)),
+            DrcResult::Pass
+        );
+
+        assert_eq!(
+            check_new_driver_against_pins(&w, 5, foreign, std::slice::from_ref(&pin)),
+            DrcResult::Reject(vec![Violation {
+                pin: PinId {
+                    node: 20,
+                    port: PinPort::Index(0),
+                },
+                position: support,
+                drivers: vec![(5, foreign)],
+                reason: ViolationReason::ExtraDriver,
+                confidence: ConnectivityConfidence::Certain,
+            }])
+        );
     }
 }

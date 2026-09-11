@@ -51,6 +51,28 @@ use sequential::{
     route_sequential_inputs, rs_latch_input_node_ids, select_rs_latch_not_pairs,
 };
 
+fn report_driver_side(world: &World3D, state: &PlacementState, net: GraphNodeId, driver: Position) {
+    if !crate::transform::place_and_route::electrical_drc::debug_enabled() {
+        return;
+    }
+    if let crate::transform::place_and_route::electrical_drc::DrcResult::Reject(violations) =
+        crate::transform::place_and_route::electrical_drc::check_new_driver_against_pins(
+            world,
+            net,
+            driver,
+            state.pins(),
+        )
+    {
+        for violation in violations {
+            crate::perf::note_candidate_drc_driver_side();
+            eprintln!(
+                "[peca-drv] driver_node={} driver={:?} pin_node={} pin={:?} reason={:?}",
+                net, driver, violation.pin.node, violation.position, violation.reason
+            );
+        }
+    }
+}
+
 pub struct LocalPlacer {
     graph: LogicGraph,
     config: LocalPlacerConfig,
@@ -608,6 +630,7 @@ impl LocalPlacer {
                             let mut state = state.clone();
                             state.set_node_position(node.id, position);
                             state.set_signal_footprint(node.id, [position]);
+                            report_driver_side(&world, &state, node.id, position);
                             state.record_anchor(node.id, position);
                             (world, state)
                         })
@@ -621,6 +644,7 @@ impl LocalPlacer {
                     let mut state = state.clone();
                     state.set_node_position(node.id, position);
                     state.set_signal_footprint(node.id, [position]);
+                    report_driver_side(&world, &state, node.id, position);
                     state.record_anchor(node.id, position);
                     (world, state)
                 })
@@ -702,6 +726,7 @@ impl LocalPlacer {
                                 [Some(position), support].into_iter().flatten(),
                             );
                             state.record_anchor(node.id, position);
+                            report_driver_side(&world, &state, node.id, position);
                             if let Some(support) = support {
                                 state.record_pin(PinRecord::new(
                                     node.id,

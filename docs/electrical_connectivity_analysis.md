@@ -244,10 +244,24 @@ violations, because a deterministic short must not be sampled.
 ### 10.5 Commit order
 
 1. **M0.12.0** — shared electrical driver query (`fa1d6db`, done).
-2. **M0.12.1** — report-only pre-route pin check + `PinId`/`NetIndex` API.
-3. **M0.12.2** — report-only driver-side check.
+2. **M0.12.1** — report-only pre-route pin check + `PinId`/`NetIndex` API
+   (done).
+3. **M0.12.2** — report-only driver-side check (done).
 4. **M0.12.3** — enforce `SingleSource` (NOT/repeater/latch inputs); OR stays
    report-only.
 5. **M0.12.4** — legality-yield benchmark; flip PECA default-on only if the
    legal-candidate yield is sufficient.
 6. **M0.11** — DCE-lite (plain DAG liveness in `prepare_place`).
+
+### 10.6 M0.12.1/M0.12.2 measurements
+
+On the `state_next` reproducer, with `MCHDL_DEBUG_PECA=1`:
+
+- pre-route pin check: 2014 foreign-driver observations before routing
+  (`candidate_drc_pre_route`);
+- driver-side check: 1810 observations of a later terminal driving an existing
+  foreign pin (`candidate_drc_driver_side`), for example
+  `driver_node=20 driver=(11,2,3) pin_node=16 pin=(11,1,3)`.
+
+Both directions are now quantified; the default path pays nothing because the
+checks only run when the debug flag is set.
