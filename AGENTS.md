@@ -57,6 +57,9 @@ Debug diagnostics (one-line summaries, off by default):
   signal footprints, non-air blocks) for the local placer.
 - `MCHDL_DEBUG_PECA=1`: PECA (physical electrical connectivity) violation
   reports, printed before truth-table validation.
+- `MCHDL_PECA_ENFORCE=1`: enforce PECA `Certain` (`Single`) violations by
+  rejecting candidates before truth-table validation (opt-in; default is
+  report-only).
 
 The ignored test `state_next_graph_candidate_truth_reproducer`
 (`global_pnr/candidate.rs`) reproduces the `state_next` truth-table rejection;

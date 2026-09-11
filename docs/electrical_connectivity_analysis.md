@@ -109,7 +109,11 @@ Two independent axes:
    one-hop cobble relay; eliminates the `MissingBranch` false positives.
 3. **M0.10a.2** — confidence model: `Single` is `Certain`, `Merge` is
    `SimulationRequired`.
-4. **M0.10b** — enforce `Single` only.
+4. **M0.10b** — enforce `Single` only, implemented as an opt-in mode
+   (`MCHDL_PECA_ENFORCE=1`). Default-on is blocked on M0.12 generation-time
+   avoidance: the legacy placer currently produces only shorted candidates for
+   the failing designs, so enforcement alone turns "compiles with a hidden
+   short" into "does not compile".
 5. **M0.10c** — enforce `Merge`, with the localized simulation fallback.
 6. **M0.11** — DCE of dead logic (separate concern; removes the dead-logic
    coupling noise and shrinks the search space).
@@ -164,3 +168,13 @@ couplings: dead-logic nets reaching live components (removed later by DCE)
 and live shorts whose extra driver is logically absorbed by the cone (the
 truth table passes, but the circuit is fragile). The confirmed `state_next`
 `Single` violation persists on all 32 `tail_n20` candidates.
+
+### 9.3 Enforcement measurement (M0.10b)
+
+With `MCHDL_PECA_ENFORCE=1`, every reproducer variant whose candidates carry a
+`Certain` violation is rejected before the truth-table check
+(`drc_rejects=32`, `truth_rejects=0`). The non-heavy suite stays green (372
+passed; it contains no `Certain` violations). Enforcement is safe as a gate,
+but the legacy placer cannot yet produce a clean candidate for the
+`state_next`/`tail_n8`/`tail_n19` shapes: generation-time avoidance (M0.12) or
+DCE (M0.11) is required before default-on.

@@ -256,6 +256,15 @@ fn generate_unit_candidates(
                 }
             }
         }
+        if peca_enforce_enabled()
+            && drc_violations.iter().any(|violation| {
+                violation.confidence
+                    == crate::transform::place_and_route::electrical_drc::ConnectivityConfidence::Certain
+            })
+        {
+            crate::perf::note_candidate_drc_reject();
+            continue;
+        }
         if validate_truth_table && !candidate_matches_truth_table(&graph, &placed)? {
             crate::perf::note_candidate_truth_reject();
             continue;
@@ -311,6 +320,20 @@ fn peca_debug_enabled() -> bool {
         2 => false,
         _ => {
             let enabled = std::env::var_os("MCHDL_DEBUG_PECA").is_some();
+            FLAG.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
+            enabled
+        }
+    }
+}
+
+fn peca_enforce_enabled() -> bool {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    static FLAG: AtomicU8 = AtomicU8::new(0);
+    match FLAG.load(Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => {
+            let enabled = std::env::var_os("MCHDL_PECA_ENFORCE").is_some();
             FLAG.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
             enabled
         }
@@ -1141,11 +1164,12 @@ mod tests {
         let candidates =
             generate_routable_module_candidates_with_progress_label(&module, &config, None, Some(label))?;
         eprintln!(
-            "[repro] {label}: candidates={} truth_rejects={} port_rejects={} drc_violations={}",
+            "[repro] {label}: candidates={} truth_rejects={} port_rejects={} drc_violations={} drc_rejects={}",
             candidates.len(),
             crate::perf::candidate_truth_rejects(),
             crate::perf::candidate_port_rejects(),
-            crate::perf::candidate_drc_violations()
+            crate::perf::candidate_drc_violations(),
+            crate::perf::candidate_drc_rejects()
         );
         Ok(())
     }

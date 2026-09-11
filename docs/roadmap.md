@@ -208,7 +208,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M0.10a | PECA report-only: shared `world/electrical.rs` rules, pin/terminal provenance from the local placer, component extraction, `Single`/`Merge`/`Passive` contracts; mechanically confirms `node=20 ExtraDriver drivers=[(5, state switch)]` on all 32 `tail_n20` candidates | 368 non-heavy tests |
 | CAD-M0.10a.1 | Merge semantics: observed driver set at the OR tap plus the one-hop terminal -> cobble -> dust relay; `MissingBranch` false positives eliminated (0 remaining in the reproducer) | 372 non-heavy tests |
 | CAD-M0.10a.2 | Confidence model: `Single` violations are `Certain`, `Merge` violations are `SimulationRequired`; only `Certain` will be enforced | 372 non-heavy tests |
-| CAD-M0.10b | PECA enforce `Single` only (hard exclusivity); `Merge` stays report-only | planned |
+| CAD-M0.10b | PECA enforce `Single` (opt-in `MCHDL_PECA_ENFORCE=1`): `Certain` violations reject before the truth table (`drc_rejects=32`, `truth_rejects=0` on the reproducer); default-on pending generation-time avoidance | 372 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

@@ -129,9 +129,11 @@
   reproduces the defect (`node=20 ExtraDriver drivers=[(5, state switch)]` on
   all 32 `tail_n20` candidates). Merge semantics now include the one-hop
   cobble relay (zero `MissingBranch` false positives) and violations carry
-  confidence (`Single` = `Certain`, `Merge` = `SimulationRequired`). Next:
-  M0.10b enforces `Single` only. `full_adder` still produces no placement even
-  with a wide budget.
+  confidence (`Single` = `Certain`, `Merge` = `SimulationRequired`). Opt-in
+  enforcement of `Certain` violations is available (`MCHDL_PECA_ENFORCE=1`);
+  default-on is pending generation-time avoidance (M0.12) because the legacy
+  placer currently cannot produce a clean candidate for the failing shapes.
+  `full_adder` still produces no placement even with a wide budget.
 
 ## 3. What is not complete
 
