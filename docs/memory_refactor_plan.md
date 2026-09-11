@@ -193,12 +193,14 @@ Acceptance: attempt peak bytes drop; non-heavy suite green.
 - **Limitation (root cause C)**: `full_adder` (27 prepared nodes) produces zero
   placements even with `combinational_sampling_limit = 128` and a 40M clone
   limit; the legacy local placer cannot realize that cone.
-- **New engine experiment**: a composite `andnot` chain (three instances) with
-  `--placement-engine annealed` now reaches routing after the box-retry fix,
-  but the route fails (`u1.y -> u2.a` unreachable), while the Legacy engine
-  compiles the same design in 16.6 s. The SA cost (HPWL, bbox, blocked pins,
-  overlap) has no routability or pin-access term, which matches the M3 design
-  note that escape/pin-access costs are still missing.
+- **New engine experiment (fixed)**: a composite `andnot` chain (three
+  instances) with `--placement-engine annealed` initially failed to route. The
+  causes were the missing spacing/pin-access costs (macros packed flush), no
+  placement margin (external input switches could not fit), and a single
+  placement attempt per layout combination. After adding halo-aware spacing and
+  pin-access costs, a four-cell margin, six-cell channels, and four
+  deterministic seed attempts, the Annealed engine completes the design in
+  4.7 s at 49 MiB (Legacy: 16.6 s at 73 MiB).
 
 **Context**: the M0.5 work removed the memory wall (COW `World3D`, work budget,
 frontier cap). The remaining wall is leaf placement quality/correctness. With
