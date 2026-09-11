@@ -1,6 +1,6 @@
 # Physical Electrical Connectivity Analysis (PECA)
 
-Status: in progress · Branch: `cad-refactor` · Owner: M0.10
+Status: M0.10a done (report-only) · Branch: `cad-refactor` · Owner: M0.10
 
 ## 1. Why this layer exists
 
@@ -110,3 +110,35 @@ release treats every driver as `Possible` and reports without rejecting.
 - `or_one_sided` (full graph shape) — `Merge` violation: the OR tap is driven
   by only one branch.
 - `fanout` — one net driving many pins is not a violation.
+
+## 9. M0.10a results (commits `fa1d6db`, `7a6d8c9`)
+
+- `world/electrical.rs` is the shared rule set; the simulator consumes it
+  (27 simulator tests unchanged).
+- The local placer emits per-node anchors and per-pin contracts; `analyze`
+  runs before truth-table validation and reports without rejecting.
+- The confirmed `state_next` defect is reproduced mechanically: all 32
+  `tail_n20` candidates report
+  `node=20 pin=(0,4,1) ExtraDriver drivers=[(5, (0,5,1))]` — the `state`
+  input switch driving the second inverter's support cobble.
+- Regression tests: `foreign_switch_adjacent_to_not_input_is_a_single_violation`,
+  `double_not_with_single_driver_is_clean`, `fanout_of_a_single_source_is_clean`.
+- Non-heavy suite: 368 passed.
+
+### 9.1 Finding: the DRC is stricter than the truth table
+
+Candidates that pass the truth table can still contain electrical shorts. In
+`tail_n8`/`tail_n19` the accepted candidates report ~36 violations, partly on
+dead logic (removed later by DCE) and partly on live logic where the short
+does not flip the tested output. This is the intended value of the layer: the
+truth table is necessary but not sufficient.
+
+### 9.2 Known limitation: OR tap reachability false positives
+
+`Merge` reports `MissingBranch` on valid OR merges (for example `tail_n8`
+`node=17 MissingBranch(16)` although the candidate passes the truth table).
+The static component walk does not yet capture every path by which a branch
+can reach the tap (notably cobble-mediated hops). This must be fixed before
+M0.10b enforces violations, otherwise valid candidates would be rejected.
+`Single` checks are not affected by this gap and already match the confirmed
+root cause.

@@ -124,9 +124,13 @@
   reduction. Details in `docs/memory_refactor_plan.md`.
 - **M0.9-M0.10 (in progress)**: the `state_next` truth-table rejection is
   confirmed as a missing electrical-exclusivity check (a NOT input pin placed
-  adjacent to a foreign power source). The fix is the PECA layer
-  (`docs/electrical_connectivity_analysis.md`), not a one-off placer patch.
-  `full_adder` still produces no placement even with a wide budget.
+  adjacent to a foreign power source). The PECA layer
+  (`docs/electrical_connectivity_analysis.md`) is report-only (M0.10a, commits
+  `fa1d6db`/`7a6d8c9`) and mechanically reproduces the defect
+  (`node=20 ExtraDriver drivers=[(5, state switch)]` on all 32 `tail_n20`
+  candidates). Enforcement (M0.10b) is blocked on an OR-tap `Merge`
+  reachability false positive. `full_adder` still produces no placement even
+  with a wide budget.
 
 ## 3. What is not complete
 
