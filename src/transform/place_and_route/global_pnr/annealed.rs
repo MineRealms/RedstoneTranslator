@@ -77,16 +77,33 @@ pub fn placement_candidates_annealed(
         .map(|(_, candidate)| candidate.bbox.height())
         .max()
         .unwrap_or(1);
-    let annealing = AnnealingConfig {
-        initial: InitialPlacementConfig {
-            world: DimSize(side, side, max_height.max(4) + 4),
-            spacing: config.spacing,
+    let mut solution = None;
+    let mut last_error = None;
+    for attempt in 0..3 {
+        let scale = 1usize << attempt;
+        let annealing = AnnealingConfig {
+            initial: InitialPlacementConfig {
+                world: DimSize(
+                    side.saturating_mul(scale),
+                    side.saturating_mul(scale),
+                    (max_height.max(4) + 4).saturating_mul(scale),
+                ),
+                spacing: config.spacing,
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    let solution = place_annealed(&problem, &annealing)?;
+        };
+        match place_annealed(&problem, &annealing) {
+            Ok(found) => {
+                solution = Some(found);
+                break;
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    let solution = solution.ok_or_else(|| {
+        last_error.unwrap_or_else(|| eyre::eyre!("annealed placement produced no solution"))
+    })?;
     if !solution.is_legal() {
         eyre::bail!("annealed placement is not legal: {:?}", solution.legality);
     }

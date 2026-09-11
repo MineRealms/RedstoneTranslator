@@ -9,6 +9,7 @@ use redstone_compiler::transform::place_and_route::compression::{
     place_and_route_with_compression,
 };
 use redstone_compiler::transform::place_and_route::global_pnr::cell_library::CellLibrary;
+use redstone_compiler::transform::place_and_route::global_pnr::placer::PlacementEngine;
 use redstone_compiler::transform::place_and_route::global_pnr::topology::ResolvedPnrTopology;
 use redstone_compiler::transform::place_and_route::global_pnr::{
     apply_routable_document, emit_prepared_pnr_snapshot, load_prepared_pnr_snapshot,
@@ -54,6 +55,18 @@ pub struct CompilerOption {
     /// Fail with an error once the process working set exceeds this budget.
     #[structopt(long)]
     pub memory_budget_mb: Option<usize>,
+
+    /// Placement engine: `legacy` (shelf/free3D heuristics) or `annealed` (SA).
+    #[structopt(long, default_value = "legacy")]
+    pub placement_engine: String,
+}
+
+fn placement_engine(name: &str) -> eyre::Result<PlacementEngine> {
+    match name {
+        "legacy" => Ok(PlacementEngine::Legacy),
+        "annealed" => Ok(PlacementEngine::Annealed),
+        other => eyre::bail!("unknown placement engine `{other}`; expected `legacy` or `annealed`"),
+    }
 }
 
 fn load_mapping_spec(path: &std::path::Path) -> eyre::Result<MappingSpec> {
@@ -191,6 +204,7 @@ fn compile_verilog_input(opt: CompilerOption) -> eyre::Result<()> {
     let mut config = GlobalPnrConfig::default();
     config.physical_intent = physical_intent;
     config.candidate_cache_dir = opt.candidate_cache.clone();
+    config.placement.engine = placement_engine(&opt.placement_engine)?;
     apply_cell_library(&mut config, cell_library);
     compile_with_snapshot(options, || {
         emit_intent_source(intent_source.as_ref())?;
@@ -276,6 +290,7 @@ fn compile_rcir_input(opt: CompilerOption) -> eyre::Result<()> {
         }
     }
     apply_cell_library(&mut config, cell_library);
+    config.placement.engine = placement_engine(&opt.placement_engine)?;
     match &ir {
         RcirDocument::Logical(design) => compile_with_snapshot(options, || {
             emit_intent_source(intent_source.as_ref())?;
