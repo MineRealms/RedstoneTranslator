@@ -551,52 +551,7 @@ impl Simulator {
 
         let mut cobble_power_inputs = vec![Vec::<CobblePowerInput>::new(); volume];
         for source in self.power_source_positions.iter().copied() {
-            let source_block = self.world[source];
-            let mut targets = Vec::new();
-            match source_block.kind {
-                BlockKind::Torch { .. } => {
-                    let soft_targets = match source_block.direction {
-                        Direction::Bottom => source.cardinal(),
-                        Direction::East | Direction::West | Direction::South | Direction::North => {
-                            let mut positions = source.cardinal_except(source_block.direction);
-                            positions.extend(source.down());
-                            positions
-                        }
-                        _ => Vec::new(),
-                    };
-                    targets.extend(soft_targets.into_iter().map(|target| (target, false)));
-                    targets.push((source.up(), true));
-                }
-                BlockKind::Switch { .. } => {
-                    targets.extend(
-                        source
-                            .forwards_except(source_block.direction)
-                            .into_iter()
-                            .map(|target| (target, false)),
-                    );
-                    if let Some(target) = source.walk(source_block.direction) {
-                        targets.push((target, true));
-                    }
-                }
-                BlockKind::Redstone { state, .. } => {
-                    targets.extend(
-                        self.redstone_propagate_targets(source, state)
-                            .into_iter()
-                            .map(|target| (target, false)),
-                    );
-                }
-                BlockKind::RedstoneBlock => {
-                    targets.extend(source.forwards().into_iter().map(|target| (target, false)));
-                }
-                BlockKind::Repeater { .. } => {
-                    if let Some(target) = source.walk(source_block.direction.inverse()) {
-                        targets.push((target, true));
-                    }
-                }
-                _ => {}
-            }
-
-            for (target, hard) in targets {
+            for (target, hard) in crate::world::electrical::power_targets(&self.world, source) {
                 if !self.world.size.bound_on(target) || !self.world[target].kind.is_cobble() {
                     continue;
                 }
@@ -931,35 +886,7 @@ impl Simulator {
     }
 
     fn redstone_propagate_targets(&self, pos: Position, state: usize) -> Vec<Position> {
-        let mut propagate_targets = Vec::new();
-
-        propagate_targets.extend(pos.cardinal_redstone(state));
-
-        let up_pos = pos.up();
-        if self.world.size.bound_on(up_pos) && !self.world[up_pos].kind.is_cobble() {
-            propagate_targets.extend(up_pos.cardinal_redstone(state).into_iter().filter(|&pos| {
-                self.world.size.bound_on(pos) && self.world[pos].kind.is_redstone()
-            }));
-        }
-
-        if let Some(down_pos) = pos.down() {
-            if self.world[down_pos].kind.is_cobble() {
-                propagate_targets.push(down_pos);
-
-                propagate_targets.extend(
-                    pos.cardinal_redstone(state)
-                        .into_iter()
-                        .filter(|&pos| self.world.size.bound_on(pos))
-                        .filter(|&pos| !self.world[pos].kind.is_cobble())
-                        .filter_map(|pos| pos.walk(Direction::Bottom))
-                        .filter(|&pos| {
-                            self.world.size.bound_on(pos) && self.world[pos].kind.is_redstone()
-                        }),
-                );
-            }
-        }
-
-        propagate_targets
+        crate::world::electrical::redstone_propagate_targets(&self.world, pos, state)
     }
 
     fn normalize_signal_levels(&mut self) -> bool {

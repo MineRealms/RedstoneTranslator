@@ -9,6 +9,7 @@ use itertools::Itertools;
 use position::{DimSize, Position, PositionIndex};
 
 pub mod block;
+pub mod electrical;
 pub mod gate;
 pub mod position;
 pub mod simulator;
