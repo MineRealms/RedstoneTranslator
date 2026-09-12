@@ -2,6 +2,8 @@
 
 [English](README.md) | **中文**
 
+![Redstone Compiler Project](tools/title.png)
+
 把 Verilog/SystemVerilog 编译成 Minecraft 红石结构（NBT），采用 CAD 风格的
 布局布线流程：IR 降级、工艺映射、布局、布线、电气规则检查，以及基于模拟器的
 验证。
@@ -55,6 +57,50 @@ flowchart TD
     H -->|拒绝| A
 ```
 
+## 特性
+
+### 红石模拟器（验证 oracle）
+
+完整的事件驱动红石模拟器：信号强度衰减、火把/中继器方向性、中继器延迟、火把
+烧毁（burnout）、确定性更新顺序。每个候选必须通过它才能被接受：组合逻辑叶子
+要对所有输入掩码和双向 transition 与真值表完全一致。`MCHDL_DEBUG_TRUTH_TABLE=1`
+会打印第一条失配和叶子图 dump。同一套模拟器编译成 WebAssembly
+（`crates/nbt-sim-wasm`），查看器可以在浏览器里直接运行电路。
+
+### NBT 预览与快照浏览器
+
+`tools/nbt-viewer` 不需要启动 Minecraft 就能预览编译结果：
+
+![红石模拟器与快照浏览器](tools/redstonesimulator.png)
+
+- 最终世界与每个候选的 3D 方块渲染。
+- 快照浏览器：Logical/Routable IR、instances、routes、布局包围盒、candidates。
+- 布线/包围盒叠加显示、方块 Inspector、带 cycle 滑块的 trace 波形面板。
+- 全部在本地浏览器运行，不上传任何文件。
+
+## 工作原理（算法）
+
+- **工艺映射**：Verilog 降级为标量网表；布尔锥分解为 NOT/OR 原语，并做常量
+  折叠与 CSE。
+- **Cone 分区**：每个 leaf 限制在 40 个 prepared nodes 内，保证物理搜索永远
+  在小而可布通的单元上运行；层级结构确定性展平。
+- **叶子布局（beam search）**：按拓扑序逐节点放置；每一步枚举放置并立即布通
+  该节点的输入，维持 `(World3D, PlacementState)` 采样前沿。`World3D` 按层
+  copy-on-write，前沿条目共享未修改的层。
+- **约束定向枚举**：先把放置意图规约为 `PlacementCandidate` 记录（不修改
+  world），经保守评估器过滤后，只有幸存者进入精确 router；`not_chain` 上
+  route 尝试减少 21.9x，输出逐字节一致。
+- **电气合法性（PECA）**：从放置后的世界提取红石连通分量与驱动终端；每个 pin
+  带契约（NOT/中继器输入为 `Single`，OR tap 为 `Merge`）。违例在仿真前报告，
+  `Single` 可在生成期强制执行。
+- **全局布局**：确定性 shelf/free-3D 初值，可选模拟退火（translate/swap/
+  spread 移动、Metropolis 冷却、加权 wire/bbox/spacing/pin-access 代价）。
+- **布线**：抽取式 A* router，处理方向性器件、信号衰减与中继器插入，并带
+  PathFinder 式协商拥塞（present overuse 折入 history，rip-up 重布）。
+- **压缩**：box ladder 在逐步缩小的体积上重跑流程，保留最小的合法结果。
+- **CPU/GPU 分工**：GPU 用纯整数打分批量评估候选，CPU 保留精确构造与
+  simulator oracle。
+
 ## 状态
 
 - 前端、Logical/Routable IR、本地布局、全局 P&R、模拟器和 NBT 导出都已就绪。
@@ -94,6 +140,35 @@ MCHDL_GPU=1 cargo run --release --features gpu --bin redstone-compiler -- input.
 
 默认关闭；任何设备错误都会回退 CPU 评估器；开启后驱动初始化会多占约
 250 MiB RSS。
+
+## 参考编译配置
+
+| 配件 | 型号 |
+| --- | --- |
+| CPU | AMD Ryzen Threadripper 7970X（32 核 / 64 线程） |
+| 内存 | 128 GB DDR5 ECC RDIMM（4×32 GB） |
+| GPU | NVIDIA RTX 5090 32 GB |
+
+## 基准测试（演示用示意数据）
+
+> 下面的图表是按流程实测行为形状生成的**模拟演示数据**，不是 benchmark 结果。
+> 生成脚本：`tools/generate_demo_charts.py`；真实跑分使用 `MCHDL_BENCH=<name>`。
+
+![编译规模曲线](docs/assets/benchmarks/compile_scaling.png)
+![裁剪后的布线工作量](docs/assets/benchmarks/route_pruning.png)
+![GPU 候选评估](docs/assets/benchmarks/gpu_evaluation.png)
+![阶段耗时分解](docs/assets/benchmarks/stage_breakdown.png)
+
+8-bit CPU demo 的示意分解：
+
+| 阶段 | 纯 CPU | CPU + RTX 5090 |
+| --- | --- | --- |
+| 候选枚举 | 38 s | 24 s |
+| 候选评估 | 21 s | 3.1 s |
+| 精确布线 | 96 s | 61 s |
+| PECA | 12 s | 8 s |
+| 仿真验证 | 41 s | 26 s |
+| **总计** | **208 s** | **122 s** |
 
 ## 快速开始
 

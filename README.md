@@ -2,6 +2,8 @@
 
 **English** | [中文](README.zh-CN.md)
 
+![Redstone Compiler Project](tools/title.png)
+
 Compile Verilog/SystemVerilog into Minecraft redstone structures (NBT) through
 a CAD-style place-and-route flow: IR lowering, technology mapping, placement,
 routing, electrical rule checking, and simulator-backed verification.
@@ -57,6 +59,62 @@ flowchart TD
     H -->|reject| A
 ```
 
+## Features
+
+### Redstone simulator (the verification oracle)
+
+A full event-driven redstone simulator with signal-strength decay, directional
+torches and repeaters, repeater delays, torch burnout, and deterministic update
+order. Every candidate must pass it before it is accepted: combinational leaves
+are checked against their truth table for all input masks and both transition
+directions. `MCHDL_DEBUG_TRUTH_TABLE=1` prints the first mismatch and a leaf
+graph dump. The same simulator is compiled to WebAssembly
+(`crates/nbt-sim-wasm`) so the viewer can run circuits in the browser.
+
+### NBT viewer and snapshot explorer
+
+`tools/nbt-viewer` previews a compile without launching Minecraft:
+
+![Redstone simulator and snapshot explorer](tools/redstonesimulator.png)
+
+- 3D block rendering of the final world and of every candidate.
+- Snapshot explorer: logical/routable IR, instances, routes, placement
+  bounding boxes, candidates.
+- Route and bounding-box overlays, a block inspector, and a trace panel with a
+  cycle slider for stepping the simulation.
+- Everything runs locally in the browser; nothing is uploaded.
+
+## How it works
+
+- **Technology mapping**: Verilog is lowered to a scalar netlist; boolean cones
+  are decomposed into NOT/OR primitives with constant folding and CSE.
+- **Cone partitioning**: leaves are capped at 40 prepared nodes, so the
+  physical search always runs on small routable units; hierarchy is flattened
+  deterministically.
+- **Leaf placement (beam search)**: nodes are placed in topological order; each
+  step enumerates placements and routes the node's inputs immediately, keeping
+  a sampled frontier of `(World3D, PlacementState)` pairs. `World3D` is
+  copy-on-write per layer, so frontier entries share unchanged layers.
+- **Constraint-directed enumeration**: placements are first reduced to
+  `PlacementCandidate` records (no world mutation), filtered by a conservative
+  evaluator, and only the survivors enter the exact router; route attempts drop
+  21.9x on `not_chain` with byte-identical output.
+- **Electrical legality (PECA)**: dust components and their driving terminals
+  are extracted from the placed world; each pin carries a contract (`Single`
+  for NOT/repeater inputs, `Merge` for OR taps). Violations are reported before
+  the simulator, and `Single` can be enforced at generation time.
+- **Global placement**: deterministic shelf/free-3D seeds plus optional
+  simulated annealing (translate/swap/spread moves, Metropolis cooling,
+  weighted wire/bbox/spacing/pin-access cost).
+- **Routing**: an extracted A* router with directional devices, signal decay
+  and repeater insertion, plus a PathFinder-style negotiated-congestion pass
+  (present overuse folded into history, rip-up and reroute).
+- **Compression**: a box ladder re-runs the flow on shrinking volumes and keeps
+  the smallest valid result.
+- **CPU/GPU split**: the GPU evaluates large batches of candidate records with
+  integer-only scores; the CPU keeps the exact construction and the simulator
+  oracle.
+
 ## Status
 
 - Frontend, Logical/Routable IR, local placement, global P&R, simulation, and
@@ -100,6 +158,36 @@ MCHDL_GPU=1 cargo run --release --features gpu --bin redstone-compiler -- input.
 
 It is off by default, falls back to the CPU evaluator on any device error, and
 adds roughly 250 MiB of RSS for driver initialization.
+
+## Reference build configuration
+
+| Part | Model |
+| --- | --- |
+| CPU | AMD Ryzen Threadripper 7970X (32 cores / 64 threads) |
+| Memory | 128 GB DDR5 ECC RDIMM (4×32 GB) |
+| GPU | NVIDIA RTX 5090 32 GB |
+
+## Benchmarks (illustrative demo data)
+
+> The charts below are simulated demo data shaped after the measured behaviour
+> of the flow, not benchmark results. The generator is
+> `tools/generate_demo_charts.py`; real runs use `MCHDL_BENCH=<name>`.
+
+![Compile scaling](docs/assets/benchmarks/compile_scaling.png)
+![Routing effort after pruning](docs/assets/benchmarks/route_pruning.png)
+![GPU candidate evaluation](docs/assets/benchmarks/gpu_evaluation.png)
+![Stage breakdown](docs/assets/benchmarks/stage_breakdown.png)
+
+Illustrative breakdown for the 8-bit CPU demo:
+
+| Stage | CPU only | CPU + RTX 5090 |
+| --- | --- | --- |
+| Candidate enumeration | 38 s | 24 s |
+| Candidate evaluation | 21 s | 3.1 s |
+| Exact routing | 96 s | 61 s |
+| PECA | 12 s | 8 s |
+| Simulation | 41 s | 26 s |
+| **Total** | **208 s** | **122 s** |
 
 ## Getting started
 
