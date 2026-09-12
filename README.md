@@ -22,20 +22,17 @@ therefore uses a real EDA-style flow instead of ad-hoc generation.
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph frontend["Frontend and IR"]
-        direction TB
         V["Verilog / SystemVerilog"] --> L["Logical IR (RCIR)"]
         L --> R["Routable IR (RCIR)"]
     end
     subgraph pnr["Place and Route"]
-        direction TB
         T["PnR topology"] --> P["Placement: seed + simulated annealing"]
         P --> RT["Routing: A* + PathFinder congestion"]
         RT --> C["Compression ladder"]
     end
     subgraph verify["Physical verification and output"]
-        direction TB
         W["World3D"] --> S["Redstone simulator + truth table"]
         S --> N["NBT / snapshot (.rsnap)"]
     end
@@ -48,25 +45,16 @@ being split between the CPU (irregular search and exact construction) and an
 optional GPU backend (cheap, deterministic batch filtering):
 
 ```mermaid
-flowchart LR
-    subgraph gen["Candidate generation"]
-        direction TB
-        A["Beam frontier: Vec of (World3D, PlacementState)"] --> B["Enumerate placement intents"]
-        B --> D{"Candidate evaluator"}
-        D -->|"CPU reference"| E["Legal candidates"]
-        D -->|"wgpu GPU (--features gpu, MCHDL_GPU=1)"| E
-    end
-    subgraph exact["Exact physical engine"]
-        direction TB
-        F["Exact router (A*)"] --> G["PECA electrical legality (pin contracts)"]
-    end
-    subgraph verify2["Verification"]
-        direction TB
-        H["Simulator + truth-table verification"] --> I["Pareto frontier of candidates"]
-    end
-    E --> F
-    G --> H
-    I -.->|reject| A
+flowchart TD
+    A["Beam frontier: Vec of (World3D, PlacementState)"] --> B["Enumerate placement intents"]
+    B --> D{"Candidate evaluator"}
+    D -->|"CPU reference"| E["Legal candidates"]
+    D -->|"wgpu GPU (--features gpu, MCHDL_GPU=1)"| E
+    E --> F["Exact router (A*)"]
+    F --> G["PECA electrical legality (pin contracts)"]
+    G --> H["Simulator + truth-table verification"]
+    H -->|accept| I["Pareto frontier of candidates"]
+    H -->|reject| A
 ```
 
 ## Status
@@ -86,6 +74,32 @@ flowchart LR
   and `fsm_1bit` currently produce no placement; hierarchical P&R supports leaf
   children of the top module; the simulator is the verification oracle and is
   not a vanilla-Minecraft equivalence test. See `docs/roadmap.md`.
+
+## GPU acceleration (WIP)
+
+The physical search is designed as a CPU/GPU heterogeneous flow: the CPU keeps
+the irregular work (beam search, exact routing, PECA, the simulator oracle) and
+the GPU evaluates large candidate batches with cheap, deterministic,
+integer-only scores. The full design is in `docs/gpu_acceleration_plan.md`.
+
+| Phase | Scope | State |
+| --- | --- | --- |
+| G0 | Candidate reject statistics and constraint-directed cuts (`not_chain` route attempts 1555 -> 71, output-identical) | done |
+| G1 | Candidate IR + `CandidateEvaluator` (CPU reference + wgpu/WGSL backend, CPU-vs-GPU differential test on the RTX 4060, identical end-to-end NBT) | done |
+| G2a | SA `MoveEvaluator` boundary + CPU reference | done |
+| G2b | wgpu kernel for the SA move cost delta | planned |
+| G3 | GPU route fields / PathFinder congestion maps at the top level | planned |
+| G4 | GPU DC pre-filter for truth tables (the CPU simulator stays the oracle) | planned |
+
+Enable the current GPU path with:
+
+```powershell
+cargo build --release --features gpu
+MCHDL_GPU=1 cargo run --release --features gpu --bin redstone-compiler -- input.v out.nbt
+```
+
+It is off by default, falls back to the CPU evaluator on any device error, and
+adds roughly 250 MiB of RSS for driver initialization.
 
 ## Getting started
 

@@ -21,20 +21,17 @@ redstone build cpu.v   ->   cpu.nbt / cpu.schem   ->   在 Minecraft 中运行
 ## 架构
 
 ```mermaid
-flowchart LR
+flowchart TD
     subgraph frontend["前端与 IR"]
-        direction TB
         V["Verilog / SystemVerilog"] --> L["Logical IR (RCIR)"]
         L --> R["Routable IR (RCIR)"]
     end
     subgraph pnr["布局布线"]
-        direction TB
         T["PnR 拓扑"] --> P["布局：确定性初值 + 模拟退火"]
         P --> RT["布线：抽取式 A* + PathFinder 协商拥塞"]
         RT --> C["压缩 ladder"]
     end
     subgraph verify["物理验证与输出"]
-        direction TB
         W["World3D"] --> S["红石模拟器 + 真值表"]
         S --> N["NBT / 快照 (.rsnap)"]
     end
@@ -46,25 +43,16 @@ flowchart LR
 构造）和可选的 GPU 后端（廉价、确定性的批量筛选）：
 
 ```mermaid
-flowchart LR
-    subgraph gen["候选生成"]
-        direction TB
-        A["Beam 前沿: Vec of (World3D, PlacementState)"] --> B["枚举放置意图"]
-        B --> D{"候选评估器"}
-        D -->|"CPU 参考实现"| E["合法候选"]
-        D -->|"wgpu GPU (--features gpu, MCHDL_GPU=1)"| E
-    end
-    subgraph exact["精确物理引擎"]
-        direction TB
-        F["精确布线 (A*)"] --> G["PECA 电气合法性 (pin 契约)"]
-    end
-    subgraph verify2["验证"]
-        direction TB
-        H["模拟器 + 真值表验证"] --> I["候选 Pareto 前沿"]
-    end
-    E --> F
-    G --> H
-    I -.->|拒绝| A
+flowchart TD
+    A["Beam 前沿: Vec of (World3D, PlacementState)"] --> B["枚举放置意图"]
+    B --> D{"候选评估器"}
+    D -->|"CPU 参考实现"| E["合法候选"]
+    D -->|"wgpu GPU (--features gpu, MCHDL_GPU=1)"| E
+    E --> F["精确布线 (A*)"]
+    F --> G["PECA 电气合法性 (pin 契约)"]
+    G --> H["模拟器 + 真值表验证"]
+    H -->|通过| I["候选 Pareto 前沿"]
+    H -->|拒绝| A
 ```
 
 ## 状态
@@ -81,6 +69,31 @@ flowchart LR
 - 已知限制：简单组合逻辑可以端到端编译；`full_adder` 与 `fsm_1bit` 目前放不
   出来；层级 P&R 只支持顶层的 leaf children；simulator 是验证依据，但不是
   vanilla Minecraft 的等价验证。详见 `docs/roadmap.md`。
+
+## GPU 加速（WIP）
+
+物理搜索被设计成 CPU/GPU 异构流程：CPU 负责不规则工作（beam search、精确
+布线、PECA、模拟器 oracle），GPU 用廉价、确定性、纯整数的打分评估大批量候选。
+完整设计见 `docs/gpu_acceleration_plan.md`。
+
+| 阶段 | 范围 | 状态 |
+| --- | --- | --- |
+| G0 | 候选拒绝统计 + 约束定向裁剪（`not_chain` route 尝试 1555 -> 71，输出不变） | 完成 |
+| G1 | Candidate IR + `CandidateEvaluator`（CPU 参考 + wgpu/WGSL 后端，RTX 4060 上 CPU/GPU 差分测试通过，端到端 NBT 一致） | 完成 |
+| G2a | SA `MoveEvaluator` 边界 + CPU 参考实现 | 完成 |
+| G2b | SA move cost delta 的 wgpu kernel | 计划中 |
+| G3 | 顶层 GPU route field / PathFinder 拥塞图 | 计划中 |
+| G4 | 真值表 GPU DC 预筛（CPU simulator 仍是 oracle） | 计划中 |
+
+启用当前 GPU 路径：
+
+```powershell
+cargo build --release --features gpu
+MCHDL_GPU=1 cargo run --release --features gpu --bin redstone-compiler -- input.v out.nbt
+```
+
+默认关闭；任何设备错误都会回退 CPU 评估器；开启后驱动初始化会多占约
+250 MiB RSS。
 
 ## 快速开始
 
