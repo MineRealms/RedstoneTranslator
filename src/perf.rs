@@ -35,6 +35,12 @@ static ROUTE_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 static ROUTE_FAILURES: AtomicUsize = AtomicUsize::new(0);
 static ROUTE_SUCCESSES: AtomicUsize = AtomicUsize::new(0);
 static CANDIDATES_ACCEPTED: AtomicUsize = AtomicUsize::new(0);
+static ROUTE_GOAL_DIRECT_HITS: AtomicUsize = AtomicUsize::new(0);
+static ROUTE_GOAL_REDSTONE_HITS: AtomicUsize = AtomicUsize::new(0);
+static ROUTE_GOAL_REDSTONE_SKIPPED: AtomicUsize = AtomicUsize::new(0);
+static ROUTE_GOAL_EMPTY: AtomicUsize = AtomicUsize::new(0);
+static ROUTE_INIT_EMPTY: AtomicUsize = AtomicUsize::new(0);
+static ROUTE_SKIPPED: AtomicUsize = AtomicUsize::new(0);
 
 /// Maximum number of local placement generations before the search gives up.
 /// A deterministic guard against the exponential local search; the error is
@@ -197,6 +203,30 @@ pub fn note_candidate_accepted() {
     CANDIDATES_ACCEPTED.fetch_add(1, Ordering::Relaxed);
 }
 
+pub fn note_route_goal_direct_hits(count: usize) {
+    ROUTE_GOAL_DIRECT_HITS.fetch_add(count, Ordering::Relaxed);
+}
+
+pub fn note_route_goal_redstone_hits(count: usize) {
+    ROUTE_GOAL_REDSTONE_HITS.fetch_add(count, Ordering::Relaxed);
+}
+
+pub fn note_route_goal_redstone_skipped() {
+    ROUTE_GOAL_REDSTONE_SKIPPED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn note_route_goal_empty() {
+    ROUTE_GOAL_EMPTY.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn note_route_init_empty() {
+    ROUTE_INIT_EMPTY.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn note_route_skipped() {
+    ROUTE_SKIPPED.fetch_add(1, Ordering::Relaxed);
+}
+
 pub fn candidate_drc_violations() -> usize {
     CANDIDATE_DRC_VIOLATIONS.load(Ordering::Relaxed)
 }
@@ -241,6 +271,30 @@ pub fn candidates_accepted() -> usize {
     CANDIDATES_ACCEPTED.load(Ordering::Relaxed)
 }
 
+pub fn route_goal_direct_hits() -> usize {
+    ROUTE_GOAL_DIRECT_HITS.load(Ordering::Relaxed)
+}
+
+pub fn route_goal_redstone_hits() -> usize {
+    ROUTE_GOAL_REDSTONE_HITS.load(Ordering::Relaxed)
+}
+
+pub fn route_goal_redstone_skipped() -> usize {
+    ROUTE_GOAL_REDSTONE_SKIPPED.load(Ordering::Relaxed)
+}
+
+pub fn route_goal_empty() -> usize {
+    ROUTE_GOAL_EMPTY.load(Ordering::Relaxed)
+}
+
+pub fn route_init_empty() -> usize {
+    ROUTE_INIT_EMPTY.load(Ordering::Relaxed)
+}
+
+pub fn route_skipped() -> usize {
+    ROUTE_SKIPPED.load(Ordering::Relaxed)
+}
+
 pub fn candidate_truth_rejects() -> usize {
     CANDIDATE_TRUTH_REJECTS.load(Ordering::Relaxed)
 }
@@ -273,6 +327,12 @@ pub fn reset_for_tests() {
     ROUTE_FAILURES.store(0, Ordering::Relaxed);
     ROUTE_SUCCESSES.store(0, Ordering::Relaxed);
     CANDIDATES_ACCEPTED.store(0, Ordering::Relaxed);
+    ROUTE_GOAL_DIRECT_HITS.store(0, Ordering::Relaxed);
+    ROUTE_GOAL_REDSTONE_HITS.store(0, Ordering::Relaxed);
+    ROUTE_GOAL_REDSTONE_SKIPPED.store(0, Ordering::Relaxed);
+    ROUTE_GOAL_EMPTY.store(0, Ordering::Relaxed);
+    ROUTE_INIT_EMPTY.store(0, Ordering::Relaxed);
+    ROUTE_SKIPPED.store(0, Ordering::Relaxed);
 }
 
 pub fn rss_bytes() -> Option<usize> {
@@ -374,7 +434,7 @@ pub fn print_summary_if_enabled() {
         .map(|bytes| format!("{} MiB", bytes >> 20))
         .unwrap_or_else(|| "n/a".to_owned());
     eprintln!(
-        "[perf] summary clones={} clone_bytes={} layer_copies={} layer_copy_bytes={} alloc_bytes={} candidate_truth_rejects={} candidate_port_rejects={} candidate_drc_violations={} candidate_drc_rejects={} candidate_drc_pre_route={} candidate_drc_driver_side={} candidate_drc_pruned={} placements_enumerated={} placements_conflict={} route_attempts={} route_failures={} route_successes={} candidates_accepted={} peak_rss={} budget={} exceeded={}",
+        "[perf] summary clones={} clone_bytes={} layer_copies={} layer_copy_bytes={} alloc_bytes={} candidate_truth_rejects={} candidate_port_rejects={} candidate_drc_violations={} candidate_drc_rejects={} candidate_drc_pre_route={} candidate_drc_driver_side={} candidate_drc_pruned={} placements_enumerated={} placements_conflict={} route_attempts={} route_failures={} route_successes={} route_skipped={} candidates_accepted={} route_goal_direct={} route_goal_redstone={} route_goal_skipped={} route_goal_empty={} route_init_empty={} peak_rss={} budget={} exceeded={}",
         world_clone_count(),
         world_clone_bytes(),
         layer_copy_count(),
@@ -392,7 +452,13 @@ pub fn print_summary_if_enabled() {
         route_attempts(),
         route_failures(),
         route_successes(),
+        route_skipped(),
         candidates_accepted(),
+        route_goal_direct_hits(),
+        route_goal_redstone_hits(),
+        route_goal_redstone_skipped(),
+        route_goal_empty(),
+        route_init_empty(),
         rss,
         budget_bytes() >> 20,
         budget_exceeded()

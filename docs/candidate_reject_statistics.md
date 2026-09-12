@@ -131,3 +131,34 @@ Findings:
 
 Note: `[perf] summary` lines are wrapped by PowerShell `Out-File`; read the
 log with `-Width 4096` or rejoin lines for machine parsing.
+
+### Route goal breakdown (`not_chain`, default `DirectOnly`)
+
+```
+route_goal_direct=71   route_goal_redstone=0   route_goal_skipped=1555
+route_goal_empty=1484  route_init_empty=0
+```
+
+The default `NotRouteStrategy` is `DirectOnly`, so the redstone branch never
+runs and the 95% failure rate is not a search failure: the support simply is
+not in the source's direct-bound set. The `MCHDL_ROUTE_QUOTA=4` experiment is
+a negative result: it is 4.6x faster on the reproducer but biases the
+selection (first N successes) and kills the search (0 candidates).
+
+### M0.12.5 first cut: direct-bound pre-check
+
+Under `DirectOnly`, a placement whose support is not a direct bound of the
+source can never route. Pre-computing the bound set and skipping those
+placements is output-identical, because the skipped placements produced no
+route:
+
+| | before | after |
+| --- | --- | --- |
+| route attempts | 1555 | 71 |
+| route failures | 1484 | 0 |
+| route successes | 71 | 71 |
+| route skipped | - | 1484 |
+| final NBT SHA256 | `09B44F4B...` | `09B44F4B...` |
+
+`DirectAndRedstone` (the reproducer configuration) still attempts redstone
+routes that fail; that is the next target (route-field pre-filter, G1/G3).

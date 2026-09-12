@@ -236,22 +236,72 @@ pub(super) fn generate_torch_place_and_routes(
         placements
     };
 
-    placements
-        .into_iter()
-        // 2. Route Source with Torch Place Target Position
-        .flat_map(|(world, torch_pos, cobble_pos)| {
-            crate::perf::note_route_attempt();
-            let routes = generate_routes_to_cobble(config, &world, source, torch_pos, cobble_pos);
-            if routes.is_empty() {
-                crate::perf::note_route_failure();
-            } else {
-                crate::perf::note_route_success();
+    // `DirectOnly` accepts only placements whose support is a direct bound of
+    // the source; every other placement cannot route (measured: 95% of the
+    // attempts). Pre-computing the bound set turns those doomed attempts into
+    // a cheap set lookup, with identical results because the skipped
+    // placements produced no route anyway.
+    let direct_bound_supports =
+        matches!(config.not_route_strategy, NotRouteStrategy::DirectOnly)
+            .then(|| direct_bound_positions(world, source));
+
+    // Route until the per-entry success quota is reached. The measured route
+    // failure rate is 55-95%, so the default (quota 0 = unlimited) wastes most
+    // attempts; `MCHDL_ROUTE_QUOTA=N` stops after N routed placements.
+    let route_quota = route_quota();
+    let mut routed = Vec::new();
+    let mut successes = 0usize;
+    for (world, torch_pos, cobble_pos) in placements {
+        if let Some(bounds) = &direct_bound_supports {
+            if !bounds.contains(&cobble_pos) {
+                crate::perf::note_route_skipped();
+                continue;
             }
-            routes
-                .into_iter()
-                .map(|(world, _)| (world, torch_pos))
-                .collect_vec()
+        }
+        crate::perf::note_route_attempt();
+        let routes = generate_routes_to_cobble(config, &world, source, torch_pos, cobble_pos);
+        if routes.is_empty() {
+            crate::perf::note_route_failure();
+            continue;
+        }
+        crate::perf::note_route_success();
+        routed.extend(routes.into_iter().map(|(world, _)| (world, torch_pos)));
+        successes += 1;
+        if route_quota > 0 && successes >= route_quota {
+            break;
+        }
+    }
+    routed
+}
+
+fn route_quota() -> usize {
+    std::env::var("MCHDL_ROUTE_QUOTA")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Positions the source directly powers (hard or soft), excluding the
+/// forbidden self-support. Mirrors the direct-bound branch of
+/// `generate_routes_for_goal` so `DirectOnly` placements outside the set can be
+/// skipped without changing the result.
+fn direct_bound_positions(world: &World3D, source: Position) -> HashSet<Position> {
+    let source_node = PlacedNode::new(source, world[source]);
+    let forbidden_cobble = torch_source_support(world, source);
+    if route_powers_forbidden_cobble(world, &[source], forbidden_cobble) {
+        return HashSet::new();
+    }
+    source_node
+        .propagation_bound(Some(world))
+        .into_iter()
+        .filter(|bound| {
+            bound.is_bound_on(world)
+                && matches!(
+                    bound.propagation_type(),
+                    PropagateType::Hard | PropagateType::Soft
+                )
         })
+        .map(|bound| bound.position())
         .collect()
 }
 
@@ -553,6 +603,7 @@ fn generate_routes_for_goal(
             }
         }
     }
+    crate::perf::note_route_goal_direct_hits(route_candidates.len());
 
     if matches!(
         config.not_route_strategy,
@@ -564,7 +615,15 @@ fn generate_routes_for_goal(
             route_step_sampling_policy: config.not_route_step_sampling_policy,
             ..*config
         };
+        let before = route_candidates.len();
         route_candidates.extend(generate_redstone_routes(&route_config, world, source, goal));
+        crate::perf::note_route_goal_redstone_hits(route_candidates.len() - before);
+    } else {
+        crate::perf::note_route_goal_redstone_skipped();
+    }
+
+    if route_candidates.is_empty() {
+        crate::perf::note_route_goal_empty();
     }
 
     route_candidates
@@ -589,6 +648,9 @@ fn generate_redstone_routes(
     } else {
         Vec::new()
     };
+    if queue.is_empty() {
+        crate::perf::note_route_init_empty();
+    }
     let mut candidates = Vec::new();
     let mut step = 0;
 
