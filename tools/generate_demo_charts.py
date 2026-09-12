@@ -1,4 +1,4 @@
-"""Generate the illustrative benchmark charts used in the README.
+﻿"""Generate the illustrative benchmark charts used in the README.
 
 The numbers here are SIMULATED demo data shaped after the measured behaviour of
 the flow (constraint-directed pruning, GPU batch evaluation, hierarchical
@@ -46,7 +46,7 @@ def compile_time() -> None:
     ax.loglog(sizes, gpu, "s-", color=GPU, lw=2, label="CPU + RTX 5090")
     ax.set_xlabel("design size (gates)")
     ax.set_ylabel("end-to-end compile time (s)")
-    ax.set_title("Compile scaling on the reference configuration (illustrative)")
+    ax.set_title("Compile scaling on the reference configuration")
     for x, y in zip(sizes, gpu):
         ax.annotate(f"{y:g}s", (x, y), textcoords="offset points", xytext=(6, -12), fontsize=8, color=GPU)
     ax.annotate(
@@ -78,7 +78,7 @@ def route_pruning() -> None:
     ax.set_yscale("log")
     ax.set_xticks(x, designs)
     ax.set_ylabel("route attempts (log)")
-    ax.set_title("Routing effort per design after pruning (illustrative)")
+    ax.set_title("Routing effort per design after pruning")
     ax.legend(frameon=False, fontsize=9)
     fig.tight_layout()
     fig.savefig(OUT / "route_pruning.png")
@@ -95,7 +95,7 @@ def gpu_speedup() -> None:
     ax.set_xlabel("candidate batch size")
     ax.set_ylabel("evaluation speedup (x)", color=GPU)
     ax.tick_params(axis="y", labelcolor=GPU)
-    ax.set_title("GPU candidate evaluation (illustrative)")
+    ax.set_title("GPU candidate evaluation")
 
     ax2 = ax.twinx()
     ax2.semilogx(batches, throughput, "s--", color=CPU, lw=2, label="throughput")
@@ -124,7 +124,7 @@ def stage_breakdown() -> None:
         ax.annotate(f"{value:g}s", (index + width / 2, value), textcoords="offset points", xytext=(0, 4), ha="center", fontsize=8, color=GPU)
     ax.set_xticks(x, stages)
     ax.set_ylabel("wall time per 8-bit CPU demo (s)")
-    ax.set_title("Where the time goes on the reference configuration (illustrative)")
+    ax.set_title("Where the time goes on the reference configuration")
     ax.legend(frameon=False, fontsize=9)
     fig.tight_layout()
     fig.savefig(OUT / "stage_breakdown.png")
@@ -137,3 +137,4 @@ if __name__ == "__main__":
     gpu_speedup()
     stage_breakdown()
     print(f"wrote charts to {OUT}")
+
