@@ -2,6 +2,8 @@
 
 pub mod cluster;
 pub mod graph;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod ir;
 pub mod logic;
 pub mod nbt;

@@ -12,6 +12,12 @@ resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+# CPU/GPU heterogeneous CAD backend (docs/gpu_acceleration_plan.md). Off by
+# default so normal builds stay unchanged.
+gpu = ["dep:wgpu", "dep:pollster", "dep:naga"]
+
 [dependencies]
 derive_more = { version = "1.0.0", features = ["deref"] }
 disjoint-set = "0.0.2"
@@ -21,7 +27,9 @@ fastanvil = "0.26"
 indicatif = { version = "0.17.9", features = ["rayon"] }
 indexmap = "2.0.0"
 itertools = "0.11.0"
+naga = { version = "24", optional = true, features = ["wgsl-in"] }
 petgraph = "0.6.3"
+pollster = { version = "0.4", optional = true }
 quine-mc_cluskey = "0.2.4"
 rand = "0.8.5"
 rayon = "1.10.0"
@@ -33,6 +41,7 @@ tracing = "0.1.37"
 tracing-subscriber = "0.3.17"
 flate2 = "1.0.26"
 serde = "1.0.183"
+wgpu = { version = "24", optional = true }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

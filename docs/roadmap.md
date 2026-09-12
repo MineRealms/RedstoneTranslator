@@ -217,6 +217,8 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M0.12.5 | Constraint-directed enumeration (first cut): `DirectOnly` placements outside the source's direct-bound set are skipped before routing; `not_chain` route attempts 1555 -> 71 with 0 failures and an identical final NBT hash; `DirectAndRedstone` failures remain | 373 non-heavy tests |
 | CAD-M0.12.5a | Interim enforce-path mitigation: cap legal placements deterministically before routing (`MCHDL_PLACEMENT_SAMPLE_CAP`, default 32); default report-only path unchanged | 373 non-heavy tests |
 | CAD-GPU-plan | `docs/gpu_acceleration_plan.md`: CPU/GPU heterogeneous CAD architecture (Candidate IR + GPU evaluator + CPU exact engine, phases G0-G4, wgpu, integer determinism) | - |
+| CAD-G1a | Candidate IR + CPU evaluator boundary: enumeration emits `PlacementCandidate` records and batch evaluation returns integer scores; behavior-identical (`not_chain` counters and NBT hash unchanged) | 378 non-heavy tests |
+| CAD-G1b | wgpu candidate evaluator behind `--features gpu` + `MCHDL_GPU=1`: WGSL kernel mirrors the CPU evaluator, differential test passes on the RTX 4060, end-to-end NBT hash unchanged | 378 non-heavy tests (+2 GPU tests) |
 | CAD-M0.12.0 | Per-stage candidate reject statistics: enumerated/conflict/route attempts/failures/successes/accepted counters in `[perf]` and per-step trace; routing dominates (55-64% of attempts fail after 18-31% geometry rejects) | 373 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component

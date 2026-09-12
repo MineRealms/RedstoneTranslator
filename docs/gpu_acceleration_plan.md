@@ -131,8 +131,13 @@ trait if a later stage (for example route fields) needs more performance.
    constraint-directed enumeration (generate legal supports first; the
    `AnywhereNonAdjacent` experiment shows brute-force freedom explodes to
    ~7680 placements per NOT). Target: ~2880 -> a few hundred candidates.
-2. **G1** — Candidate IR + CPU evaluator refactor, then the wgpu evaluator
-   behind the feature flag; differential tests against the CPU reference.
+2. **G1** — Candidate IR + CPU evaluator refactor (done, `03025be`), then the
+   wgpu evaluator behind the feature flag (done): build with
+   `--features gpu` and run with `MCHDL_GPU=1`. The WGSL kernel mirrors the CPU
+   evaluator exactly (cell validity plus the foreign-driver penalty); the
+   differential test passes on the RTX 4060 and `not_chain` compiles to the
+   identical NBT with the GPU path. Note: wgpu initialization adds roughly
+   250 MiB RSS, so the memory budget checks see a higher baseline.
 3. **G2** — GPU batch scoring for simulated annealing moves (`sa_placer`).
 4. **G3** — GPU route fields / PathFinder congestion maps at the global
    level, where the batch (instances x nets x iterations) is large.

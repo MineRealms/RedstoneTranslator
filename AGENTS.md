@@ -48,7 +48,13 @@ Local search limits (deterministic; exceeding one reports an error):
 `MCHDL_FRONTIER_CAP` (default 16,384 frontier entries per step) and
 `MCHDL_LOCAL_CLONE_LIMIT` (default 10M `World3D` clones per local search).
 Under `MCHDL_PECA_ENFORCE=1` only, `MCHDL_PLACEMENT_SAMPLE_CAP` (default 32)
-caps the legal placements routed per NOT step.
+caps the legal placements routed per NOT step. `MCHDL_ROUTE_QUOTA=N` caps the
+routed placements per frontier entry (measurement knob; 0 = unlimited).
+
+The optional GPU candidate evaluator builds with `--features gpu` (adds the
+wgpu dependency; first build needs network) and runs with `MCHDL_GPU=1`. It
+mirrors the CPU evaluator and falls back to it on any device error; expect
+about 250 MiB of extra RSS from driver initialization.
 
 Debug diagnostics (one-line summaries, off by default):
 

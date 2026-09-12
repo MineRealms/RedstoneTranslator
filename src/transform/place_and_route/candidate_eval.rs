@@ -6,9 +6,13 @@
 //! The CPU implementation is the reference; the optional `gpu` feature adds a
 //! wgpu backend that implements the same trait (`docs/gpu_acceleration_plan.md`).
 
-use crate::world::block::Direction;
+use crate::world::block::{BlockKind, Direction};
 use crate::world::position::Position;
 use crate::world::World3D;
+
+/// Ranking penalty for each foreign power source next to the support. This is
+/// a heuristic used by the evaluator; it never changes `valid`.
+pub const FOREIGN_DRIVER_PENALTY: u32 = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CandidateKind {
@@ -73,9 +77,29 @@ fn evaluate_one(world: &World3D, candidate: &PlacementCandidate) -> CandidateSco
 
     CandidateScore {
         valid: true,
-        drc_penalty: 0,
+        drc_penalty: foreign_driver_penalty(world, candidate),
         estimated_route_cost: candidate.source.manhattan_distance(&candidate.support) as u32,
     }
+}
+
+/// Counts power sources next to the support (except the expected source).
+/// Mirrors the GPU kernel exactly for the differential test.
+fn foreign_driver_penalty(world: &World3D, candidate: &PlacementCandidate) -> u32 {
+    let mut penalty = 0;
+    for neighbor in candidate.support.forwards() {
+        if !world.size.bound_on(neighbor) || neighbor == candidate.source {
+            continue;
+        }
+        let kind = world[neighbor].kind;
+        if kind.is_torch()
+            || kind.is_switch()
+            || kind.is_repeater()
+            || matches!(kind, BlockKind::RedstoneBlock)
+        {
+            penalty += FOREIGN_DRIVER_PENALTY;
+        }
+    }
+    penalty
 }
 
 /// Evaluate a batch with the configured backend (GPU when the `gpu` feature is
@@ -110,6 +134,13 @@ mod tests {
                 on_base_count: 0,
             },
             direction: Direction::None,
+        }
+    }
+
+    fn torch_block(direction: Direction) -> Block {
+        Block {
+            kind: BlockKind::Torch { is_on: false },
+            direction,
         }
     }
 
@@ -153,5 +184,13 @@ mod tests {
         let w = world(vec![]);
         let scores = evaluate(&w, &[candidate(Position(1, 1, 1), Direction::East, Position(9, 1, 1))]);
         assert!(!scores[0].valid);
+    }
+
+    #[test]
+    fn foreign_driver_neighbour_adds_penalty() {
+        let w = world(vec![(Position(3, 1, 1), torch_block(Direction::West))]);
+        let scores = evaluate(&w, &[candidate(Position(1, 1, 1), Direction::East, Position(2, 1, 1))]);
+        assert!(scores[0].valid);
+        assert_eq!(scores[0].drc_penalty, FOREIGN_DRIVER_PENALTY);
     }
 }
