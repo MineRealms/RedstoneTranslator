@@ -28,6 +28,7 @@ static CANDIDATE_DRC_VIOLATIONS: AtomicUsize = AtomicUsize::new(0);
 static CANDIDATE_DRC_REJECTS: AtomicUsize = AtomicUsize::new(0);
 static CANDIDATE_DRC_PRE_ROUTE: AtomicUsize = AtomicUsize::new(0);
 static CANDIDATE_DRC_DRIVER_SIDE: AtomicUsize = AtomicUsize::new(0);
+static CANDIDATE_DRC_PRUNED: AtomicUsize = AtomicUsize::new(0);
 
 /// Maximum number of local placement generations before the search gives up.
 /// A deterministic guard against the exponential local search; the error is
@@ -158,6 +159,10 @@ pub fn note_candidate_drc_driver_side() {
     CANDIDATE_DRC_DRIVER_SIDE.fetch_add(1, Ordering::Relaxed);
 }
 
+pub fn note_candidate_drc_pruned() {
+    CANDIDATE_DRC_PRUNED.fetch_add(1, Ordering::Relaxed);
+}
+
 pub fn candidate_drc_violations() -> usize {
     CANDIDATE_DRC_VIOLATIONS.load(Ordering::Relaxed)
 }
@@ -172,6 +177,10 @@ pub fn candidate_drc_pre_route() -> usize {
 
 pub fn candidate_drc_driver_side() -> usize {
     CANDIDATE_DRC_DRIVER_SIDE.load(Ordering::Relaxed)
+}
+
+pub fn candidate_drc_pruned() -> usize {
+    CANDIDATE_DRC_PRUNED.load(Ordering::Relaxed)
 }
 
 pub fn candidate_truth_rejects() -> usize {
@@ -199,6 +208,7 @@ pub fn reset_for_tests() {
     CANDIDATE_DRC_REJECTS.store(0, Ordering::Relaxed);
     CANDIDATE_DRC_PRE_ROUTE.store(0, Ordering::Relaxed);
     CANDIDATE_DRC_DRIVER_SIDE.store(0, Ordering::Relaxed);
+    CANDIDATE_DRC_PRUNED.store(0, Ordering::Relaxed);
 }
 
 pub fn rss_bytes() -> Option<usize> {
@@ -300,7 +310,7 @@ pub fn print_summary_if_enabled() {
         .map(|bytes| format!("{} MiB", bytes >> 20))
         .unwrap_or_else(|| "n/a".to_owned());
     eprintln!(
-        "[perf] summary clones={} clone_bytes={} layer_copies={} layer_copy_bytes={} alloc_bytes={} candidate_truth_rejects={} candidate_port_rejects={} candidate_drc_violations={} candidate_drc_rejects={} candidate_drc_pre_route={} candidate_drc_driver_side={} peak_rss={} budget={} exceeded={}",
+        "[perf] summary clones={} clone_bytes={} layer_copies={} layer_copy_bytes={} alloc_bytes={} candidate_truth_rejects={} candidate_port_rejects={} candidate_drc_violations={} candidate_drc_rejects={} candidate_drc_pre_route={} candidate_drc_driver_side={} candidate_drc_pruned={} peak_rss={} budget={} exceeded={}",
         world_clone_count(),
         world_clone_bytes(),
         layer_copy_count(),
@@ -312,6 +322,7 @@ pub fn print_summary_if_enabled() {
         candidate_drc_rejects(),
         candidate_drc_pre_route(),
         candidate_drc_driver_side(),
+        candidate_drc_pruned(),
         rss,
         budget_bytes() >> 20,
         budget_exceeded()

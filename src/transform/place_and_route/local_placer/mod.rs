@@ -17,7 +17,7 @@ use crate::output::{OutputEndpoint, PlacedWorld};
 use crate::sequential::layout::SequentialMacro;
 use crate::sequential::{SequentialPrimitive, SequentialType};
 use crate::transform::place_and_route::electrical_drc::{
-    PinContract, PinPort, PinRecord, PlacedAnalysis,
+    check_pin, DrcResult, PinContract, PinPort, PinRecord, PlacedAnalysis,
 };
 use crate::transform::place_and_route::estimate::{bounding_box_of_positions, world_compact_cost};
 use crate::transform::place_and_route::place_bound::PropagateType;
@@ -51,24 +51,35 @@ use sequential::{
     route_sequential_inputs, rs_latch_input_node_ids, select_rs_latch_not_pairs,
 };
 
-fn report_driver_side(world: &World3D, state: &PlacementState, net: GraphNodeId, driver: Position) {
-    if !crate::transform::place_and_route::electrical_drc::debug_enabled() {
-        return;
+fn driver_side_legal(
+    world: &World3D,
+    state: &PlacementState,
+    net: GraphNodeId,
+    driver: Position,
+) -> bool {
+    let debug = crate::transform::place_and_route::electrical_drc::debug_enabled();
+    let enforce = crate::transform::place_and_route::electrical_drc::enforce_enabled();
+    if !debug && !enforce {
+        return true;
     }
-    if let crate::transform::place_and_route::electrical_drc::DrcResult::Reject(violations) =
-        crate::transform::place_and_route::electrical_drc::check_new_driver_against_pins(
-            world,
-            net,
-            driver,
-            state.pins(),
-        )
-    {
-        for violation in violations {
-            crate::perf::note_candidate_drc_driver_side();
-            eprintln!(
-                "[peca-drv] driver_node={} driver={:?} pin_node={} pin={:?} reason={:?}",
-                net, driver, violation.pin.node, violation.position, violation.reason
-            );
+    match crate::transform::place_and_route::electrical_drc::check_new_driver_against_pins(
+        world,
+        net,
+        driver,
+        state.pins(),
+    ) {
+        DrcResult::Pass => true,
+        DrcResult::Reject(violations) => {
+            for violation in violations {
+                crate::perf::note_candidate_drc_driver_side();
+                if debug {
+                    eprintln!(
+                        "[peca-drv] driver_node={} driver={:?} pin_node={} pin={:?} reason={:?}",
+                        net, driver, violation.pin.node, violation.position, violation.reason
+                    );
+                }
+            }
+            !enforce
         }
     }
 }
@@ -626,13 +637,15 @@ impl LocalPlacer {
                                 constrained_positions.as_deref(),
                             )
                         })
-                        .map(|(world, position)| {
+                        .filter_map(|(world, position)| {
                             let mut state = state.clone();
                             state.set_node_position(node.id, position);
                             state.set_signal_footprint(node.id, [position]);
-                            report_driver_side(&world, &state, node.id, position);
+                            if !driver_side_legal(&world, &state, node.id, position) {
+                                return None;
+                            }
                             state.record_anchor(node.id, position);
-                            (world, state)
+                            Some((world, state))
                         })
                         .collect()
                 }
@@ -640,13 +653,15 @@ impl LocalPlacer {
             GraphNodeKind::Constant(_) => constant_node_kind()
                 .into_iter()
                 .flat_map(|kind| generate_constant_placements(&self.config, &world, kind))
-                .map(|(world, position)| {
+                .filter_map(|(world, position)| {
                     let mut state = state.clone();
                     state.set_node_position(node.id, position);
                     state.set_signal_footprint(node.id, [position]);
-                    report_driver_side(&world, &state, node.id, position);
+                    if !driver_side_legal(&world, &state, node.id, position) {
+                        return None;
+                    }
                     state.record_anchor(node.id, position);
-                    (world, state)
+                    Some((world, state))
                 })
                 .collect(),
             GraphNodeKind::Output(_) if self.config.materialize_outputs => {
@@ -669,7 +684,9 @@ impl LocalPlacer {
                 LogicType::Not => {
                     let peca_debug =
                         crate::transform::place_and_route::electrical_drc::debug_enabled();
-                    let net_index = peca_debug.then(|| {
+                    let peca_enforce =
+                        crate::transform::place_and_route::electrical_drc::enforce_enabled();
+                    let net_index = (peca_debug || peca_enforce).then(|| {
                         crate::transform::place_and_route::electrical_drc::NetIndex::build(
                             &world,
                             state.anchors(),
@@ -677,9 +694,9 @@ impl LocalPlacer {
                     });
                     let expected_net = node.inputs[0];
                     let node_id = node.id;
-                    let mut pre_route_observer = |placed: &World3D, support: Position| {
+                    let mut pre_route_observer = |placed: &World3D, support: Position| -> bool {
                         let Some(index) = &net_index else {
-                            return;
+                            return true;
                         };
                         let pin = PinRecord::new(
                             node_id,
@@ -687,22 +704,22 @@ impl LocalPlacer {
                             support,
                             PinContract::Single { expected_net },
                         );
-                        if let crate::transform::place_and_route::electrical_drc::DrcResult::Reject(
-                            violations,
-                        ) = crate::transform::place_and_route::electrical_drc::check_pin(
-                            placed, index, &pin,
-                        ) {
-                            for violation in violations {
-                                crate::perf::note_candidate_drc_pre_route();
-                                if peca_debug {
-                                    eprintln!(
-                                        "[peca-pre] node={} support={:?} reason={:?} drivers={:?}",
-                                        violation.pin.node,
-                                        violation.position,
-                                        violation.reason,
-                                        violation.drivers
-                                    );
+                        match check_pin(placed, index, &pin) {
+                            DrcResult::Pass => true,
+                            DrcResult::Reject(violations) => {
+                                for violation in violations {
+                                    crate::perf::note_candidate_drc_pre_route();
+                                    if peca_debug {
+                                        eprintln!(
+                                            "[peca-pre] node={} support={:?} reason={:?} drivers={:?}",
+                                            violation.pin.node,
+                                            violation.position,
+                                            violation.reason,
+                                            violation.drivers
+                                        );
+                                    }
                                 }
+                                !peca_enforce
                             }
                         }
                     };
@@ -717,7 +734,7 @@ impl LocalPlacer {
                                 Some(&mut pre_route_observer),
                             )
                         })
-                        .map(|(world, position)| {
+                        .filter_map(|(world, position)| {
                             let mut state = state.clone();
                             state.set_node_position(node.id, position);
                             let support = position.walk(world[position].direction);
@@ -726,7 +743,9 @@ impl LocalPlacer {
                                 [Some(position), support].into_iter().flatten(),
                             );
                             state.record_anchor(node.id, position);
-                            report_driver_side(&world, &state, node.id, position);
+                            if !driver_side_legal(&world, &state, node.id, position) {
+                                return None;
+                            }
                             if let Some(support) = support {
                                 state.record_pin(PinRecord::new(
                                     node.id,
@@ -737,7 +756,7 @@ impl LocalPlacer {
                                     },
                                 ));
                             }
-                            (world, state)
+                            Some((world, state))
                         })
                         .collect()
                 }

@@ -247,10 +247,10 @@ violations, because a deterministic short must not be sampled.
 2. **M0.12.1** — report-only pre-route pin check + `PinId`/`NetIndex` API
    (done).
 3. **M0.12.2** — report-only driver-side check (done).
-4. **M0.12.3** — enforce `SingleSource` (NOT/repeater/latch inputs); OR stays
-   report-only.
-5. **M0.12.4** — legality-yield benchmark; flip PECA default-on only if the
-   legal-candidate yield is sufficient.
+4. **M0.12.3** — enforce `SingleSource` at generation time and candidate level
+   (`MCHDL_PECA_ENFORCE=1`); OR stays report-only (done).
+5. **M0.12.4** — legality-yield benchmark (done; see 10.7). Default-on remains
+   blocked until the generator can find legal layouts.
 6. **M0.11** — DCE-lite (plain DAG liveness in `prepare_place`).
 
 ### 10.6 M0.12.1/M0.12.2 measurements
@@ -265,3 +265,30 @@ On the `state_next` reproducer, with `MCHDL_DEBUG_PECA=1`:
 
 Both directions are now quantified; the default path pays nothing because the
 checks only run when the debug flag is set.
+
+### 10.7 M0.12.3 enforcement and M0.12.4 legal yield
+
+With `MCHDL_PECA_ENFORCE=1` the filter prunes at generation time: a torch
+placement whose support has a foreign driver is dropped before routing
+(`candidate_drc_pruned`), and a newly placed terminal that would drive an
+existing foreign pin drops the branch. The candidate-level reject remains as a
+safety net.
+
+Legal yield on the `state_next` reproducer with enforcement on:
+
+| Variant | Candidates | Pruned |
+| --- | --- | --- |
+| `full` | 0 | 239 |
+| `no_dead` | 0 | 217 |
+| `tail_n8` | 0 | 239 |
+| `tail_n19` | 0 | 239 |
+| `tail_n20` | 0 | 190 |
+| `tail_n21` | 0 | 239 |
+| `state_direct` | 2 | 143 |
+| `n8_direct` | 0 | 210 |
+
+The legacy placer cannot find a legal layout for the `state_next` shapes once
+the shorted candidates are pruned (`tail_n8`/`tail_n19` previously "compiled"
+only with hidden live shorts). Default-on is therefore blocked until the
+generator gains placement freedom (orientation/distance strategies, larger
+beam/box) or the verified macro library supplies clean layouts.

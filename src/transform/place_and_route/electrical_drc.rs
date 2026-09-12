@@ -134,6 +134,22 @@ pub fn debug_enabled() -> bool {
     }
 }
 
+/// Generation-time and candidate-level enforcement of `Certain` (`Single`)
+/// violations. Off by default: report-only unless `MCHDL_PECA_ENFORCE` is set.
+pub fn enforce_enabled() -> bool {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    static FLAG: AtomicU8 = AtomicU8::new(0);
+    match FLAG.load(Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => {
+            let enabled = std::env::var_os("MCHDL_PECA_ENFORCE").is_some();
+            FLAG.store(if enabled { 1 } else { 2 }, Ordering::Relaxed);
+            enabled
+        }
+    }
+}
+
 /// Electrical components over redstone dust. Dust connects to dust; a cobble
 /// only relays terminal power one hop (see `terminal_nets_per_component`),
 /// because the simulator ignores redstone events on cobbles.

@@ -139,7 +139,7 @@ pub(super) fn generate_place_and_routes(
     world: &World3D,
     start: Position,
     kind: BlockKind,
-    pre_route_observer: Option<&mut dyn FnMut(&World3D, Position)>,
+    pre_route_observer: Option<&mut dyn FnMut(&World3D, Position) -> bool>,
 ) -> Vec<(World3D, Position)> {
     match kind {
         BlockKind::Torch { .. } => {
@@ -175,7 +175,7 @@ pub(super) fn generate_torch_place_and_routes(
     world: &World3D,
     source: Position,
     kind: BlockKind,
-    mut pre_route_observer: Option<&mut dyn FnMut(&World3D, Position)>,
+    mut pre_route_observer: Option<&mut dyn FnMut(&World3D, Position) -> bool>,
 ) -> Vec<(World3D, Position)> {
     let torch_strategy =
         Direction::iter_direction_without_top().map(|direction| Block { kind, direction });
@@ -200,7 +200,10 @@ pub(super) fn generate_torch_place_and_routes(
         // 2. Route Source with Torch Place Target Position
         .flat_map(|(world, torch_pos, cobble_pos)| {
             if let Some(observer) = pre_route_observer.as_deref_mut() {
-                observer(&world, cobble_pos);
+                if !observer(&world, cobble_pos) {
+                    crate::perf::note_candidate_drc_pruned();
+                    return Vec::new();
+                }
             }
             generate_routes_to_cobble(config, &world, source, torch_pos, cobble_pos)
                 .into_iter()
