@@ -214,6 +214,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M0.12.2 | Report-only driver-side check: a newly placed terminal must not drive an existing foreign pin; 1810 reports on the reproducer | 373 non-heavy tests |
 | CAD-M0.12.3 | Generation-time enforce (`MCHDL_PECA_ENFORCE=1`): pre-route foreign-driver pruning + driver-side pruning + candidate-level reject; default stays report-only | 373 non-heavy tests |
 | CAD-M0.12.4 | Legal-yield measurement: with enforcement the `state_next` shapes yield 0 candidates (`tail_n8`/`tail_n19` previously "compiled" only with hidden live shorts); `state_direct` yields 2; default-on blocked on placement freedom | 373 non-heavy tests |
+| CAD-M0.12.5 | Constraint-directed support enumeration (planned): generate legal support positions first instead of enumerate-all-then-filter; the `AnywhereNonAdjacent` experiment explodes the search (16-minute timeout, ~7680 candidates per NOT step) | planned |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

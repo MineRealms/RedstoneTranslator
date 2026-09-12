@@ -1114,7 +1114,11 @@ mod tests {
             leak_sampling: false,
             route_torch_directly: true,
             materialize_outputs: false,
-            torch_placement_strategy: TorchPlacementStrategy::DirectOnly,
+            torch_placement_strategy: if std::env::var_os("MCHDL_REPRO_TORCH_STRATEGY").is_some() {
+                TorchPlacementStrategy::AnywhereNonAdjacent
+            } else {
+                TorchPlacementStrategy::DirectOnly
+            },
             not_route_strategy: NotRouteStrategy::DirectAndRedstone,
             max_not_route_step: 6,
             not_route_step_sampling_policy: SamplingPolicy::Random(32),

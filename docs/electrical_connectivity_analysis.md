@@ -292,3 +292,16 @@ the shorted candidates are pruned (`tail_n8`/`tail_n19` previously "compiled"
 only with hidden live shorts). Default-on is therefore blocked until the
 generator gains placement freedom (orientation/distance strategies, larger
 beam/box) or the verified macro library supplies clean layouts.
+
+### 10.8 Placement-freedom experiment
+
+Raising the torch strategy to `AnywhereNonAdjacent` (any distance > 1) with
+enforcement on does not finish within a 16-minute budget: each NOT step
+enumerates roughly `16*16*6*5 = 7680` `(position, direction)` candidates and
+routes each one, so adding freedom by brute force explodes the search. The
+reproducer exposes `MCHDL_REPRO_TORCH_STRATEGY=1` to switch strategies for
+such measurements.
+
+The next step is constraint-directed generation: enumerate legal support
+positions first (no foreign driver, no occupied neighbour) and derive torch
+placements from them, instead of enumerate-all-then-filter.
