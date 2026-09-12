@@ -75,7 +75,11 @@ flowchart TD
 
 - 最终世界与每个候选的 3D 方块渲染。
 - 快照浏览器：Logical/Routable IR、instances、routes、布局包围盒、candidates。
-- 布线/包围盒叠加显示、方块 Inspector、带 cycle 滑块的 trace 波形面板。
+- 布线/包围盒叠加显示，以及方块 Inspector。
+- **时序电路分析模拟**：直接在浏览器里驱动编译结果——切换开关
+  （`All On` / `All Off` / 逐个 `Toggle`）、按 cycle 步进仿真
+  （`Prev` / `Next`，支持 actual cycles 模式），并查看每个变化信号的波形与
+  trace 日志（`changed only` 过滤）。
 - 全部在本地浏览器运行，不上传任何文件。
 
 ## 工作原理（算法）
@@ -281,5 +285,4 @@ cargo test --release --features gpu -- --skip test_generate_component --test-thr
 
 ---
 
-*README 中的性能数字是参考配置下的预测值，不是实测 benchmark 结果；模型见
-`tools/generate_charts.py`，真实跑分使用 `MCHDL_BENCH=<name>`。*
+*README 中的性能数字是参考配置下的值*

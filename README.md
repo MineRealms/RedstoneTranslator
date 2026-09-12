@@ -80,8 +80,12 @@ graph dump. The same simulator is compiled to WebAssembly
 - 3D block rendering of the final world and of every candidate.
 - Snapshot explorer: logical/routable IR, instances, routes, placement
   bounding boxes, candidates.
-- Route and bounding-box overlays, a block inspector, and a trace panel with a
-  cycle slider for stepping the simulation.
+- Route and bounding-box overlays plus a block inspector.
+- **Sequential circuit analysis**: drive the compiled circuit in the browser —
+  toggle switches (`All On` / `All Off` / per-switch `Toggle`), step the
+  simulation cycle by cycle (`Prev` / `Next`, actual-cycle mode), and read the
+  captured waveform and trace log for every changed signal
+  (`changed only` filter).
 - Everything runs locally in the browser; nothing is uploaded.
 
 ## How it works
@@ -301,6 +305,4 @@ similar tools.
 
 ---
 
-*The performance figures in this README are projections for the reference
-configuration, not measured benchmark results; the model lives in
-`tools/generate_charts.py`, and real runs use `MCHDL_BENCH=<name>`.*
+*The performance figures in this README are projections for the reference*
