@@ -162,3 +162,30 @@ route:
 
 `DirectAndRedstone` (the reproducer configuration) still attempts redstone
 routes that fail; that is the next target (route-field pre-filter, G1/G3).
+
+### Redstone branch breakdown (`m06-andnot`, `DirectAndRedstone`)
+
+```
+route_attempts=2834  route_failures=2066  route_successes=768
+route_goal_direct=207  route_goal_redstone=955  route_goal_empty=2066
+route_init_empty=0
+```
+
+73% of the attempts produce no route at all, and the init states are never
+empty, so the search runs but finds nothing. A sound necessary condition
+("the support must have at least one placeable dust powering position") was
+added for the redstone branch:
+
+| | before | after |
+| --- | --- | --- |
+| route attempts | 2834 | 2739 |
+| route skipped | - | 95 |
+| route failures | 2066 | 1971 |
+| route successes | 768 | 768 |
+| final NBT SHA256 | `3D8B4B33...` | `3D8B4B33...` |
+
+The filter is output-identical but only explains 95 of the 2066 failures: the
+remaining ones fail inside the redstone search (cobble conflicts along the
+path, short-circuit rejections, or step/sampling limits), which needs route
+internals instrumentation or a route-field pre-filter rather than a local
+geometry check.

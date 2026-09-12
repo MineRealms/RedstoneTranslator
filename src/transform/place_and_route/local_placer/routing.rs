@@ -272,9 +272,23 @@ pub(super) fn generate_torch_place_and_routes(
     // attempts). Pre-computing the bound set turns those doomed attempts into
     // a cheap set lookup, with identical results because the skipped
     // placements produced no route anyway.
-    let direct_bound_supports =
-        matches!(config.not_route_strategy, NotRouteStrategy::DirectOnly)
-            .then(|| direct_bound_positions(world, source));
+    //
+    // For the redstone branch the same idea applies with a necessary
+    // condition: a dust can only power the support from one of the support's
+    // powering positions, so if none of them can host a dust, no route exists.
+    let strategy = config.not_route_strategy;
+    let direct_bound_supports = matches!(
+        strategy,
+        NotRouteStrategy::DirectOnly | NotRouteStrategy::DirectAndRedstone
+    )
+    .then(|| direct_bound_positions(world, source));
+    let redstone_branch = matches!(
+        strategy,
+        NotRouteStrategy::RedstoneOnly | NotRouteStrategy::DirectAndRedstone
+    ) && {
+        let source_node = PlacedNode::new(source, world[source]);
+        source_node.is_diode() || source_node.block.kind.is_redstone()
+    };
 
     // Route until the per-entry success quota is reached. The measured route
     // failure rate is 55-95%, so the default (quota 0 = unlimited) wastes most
@@ -283,11 +297,14 @@ pub(super) fn generate_torch_place_and_routes(
     let mut routed = Vec::new();
     let mut successes = 0usize;
     for (world, torch_pos, cobble_pos) in placements {
-        if let Some(bounds) = &direct_bound_supports {
-            if !bounds.contains(&cobble_pos) {
-                crate::perf::note_route_skipped();
-                continue;
-            }
+        let directly_powered = direct_bound_supports
+            .as_ref()
+            .is_some_and(|bounds| bounds.contains(&cobble_pos));
+        let redstone_possible =
+            redstone_branch && has_placeable_powering_position(&world, cobble_pos);
+        if !directly_powered && !redstone_possible {
+            crate::perf::note_route_skipped();
+            continue;
         }
         crate::perf::note_route_attempt();
         let routes = generate_routes_to_cobble(config, &world, source, torch_pos, cobble_pos);
@@ -310,6 +327,33 @@ fn route_quota() -> usize {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(0)
+}
+
+/// Positions from which a dust could power `cobble`: its cardinal neighbours,
+/// the cell above it, and the cell above each cardinal neighbour.
+fn dust_powering_positions(cobble: Position) -> Vec<Position> {
+    let mut positions = cobble.cardinal();
+    positions.push(cobble.up());
+    for neighbor in cobble.cardinal() {
+        if let Some(down) = neighbor.down() {
+            positions.push(down);
+        }
+    }
+    positions
+}
+
+/// Necessary condition for the redstone branch: at least one powering position
+/// can host a dust (the cell is air and the cell below can host a support
+/// cobble). If none can, no redstone route can reach the support.
+fn has_placeable_powering_position(world: &World3D, cobble: Position) -> bool {
+    dust_powering_positions(cobble).into_iter().any(|position| {
+        world.size.bound_on(position)
+            && world[position].kind.is_air()
+            && position.down().is_some_and(|below| {
+                world.size.bound_on(below)
+                    && (world[below].kind.is_air() || world[below].kind.is_cobble())
+            })
+    })
 }
 
 /// Positions the source directly powers (hard or soft), excluding the
