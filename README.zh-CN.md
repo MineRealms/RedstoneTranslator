@@ -23,36 +23,48 @@ redstone build cpu.v   ->   cpu.nbt / cpu.schem   ->   在 Minecraft 中运行
 ```mermaid
 flowchart LR
     subgraph frontend["前端与 IR"]
+        direction TB
         V["Verilog / SystemVerilog"] --> L["Logical IR (RCIR)"]
         L --> R["Routable IR (RCIR)"]
     end
-    subgraph pnr["布局布线 (Place and Route)"]
-        R --> T["PnR 拓扑"]
-        T --> P["布局：确定性初值 + 模拟退火"]
+    subgraph pnr["布局布线"]
+        direction TB
+        T["PnR 拓扑"] --> P["布局：确定性初值 + 模拟退火"]
         P --> RT["布线：抽取式 A* + PathFinder 协商拥塞"]
         RT --> C["压缩 ladder"]
     end
     subgraph verify["物理验证与输出"]
-        C --> W["World3D"]
-        W --> S["红石模拟器 + 真值表"]
+        direction TB
+        W["World3D"] --> S["红石模拟器 + 真值表"]
         S --> N["NBT / 快照 (.rsnap)"]
     end
+    R --> T
+    C --> W
 ```
 
 叶子级的物理搜索是 beam search，其候选评估正在拆分为 CPU（不规则搜索与精确
 构造）和可选的 GPU 后端（廉价、确定性的批量筛选）：
 
 ```mermaid
-flowchart TD
-    A["Beam 前沿: Vec of (World3D, PlacementState)"] --> B["枚举放置意图"]
-    B --> D{"候选评估器"}
-    D -->|"CPU 参考实现"| E["合法候选"]
-    D -->|"wgpu GPU (--features gpu, MCHDL_GPU=1)"| E
-    E --> F["精确布线 (A*)"]
-    F --> G["PECA 电气合法性 (pin 契约)"]
-    G --> H["模拟器 + 真值表验证"]
-    H -->|通过| I["候选 Pareto 前沿"]
-    H -->|拒绝| A
+flowchart LR
+    subgraph gen["候选生成"]
+        direction TB
+        A["Beam 前沿: Vec of (World3D, PlacementState)"] --> B["枚举放置意图"]
+        B --> D{"候选评估器"}
+        D -->|"CPU 参考实现"| E["合法候选"]
+        D -->|"wgpu GPU (--features gpu, MCHDL_GPU=1)"| E
+    end
+    subgraph exact["精确物理引擎"]
+        direction TB
+        F["精确布线 (A*)"] --> G["PECA 电气合法性 (pin 契约)"]
+    end
+    subgraph verify2["验证"]
+        direction TB
+        H["模拟器 + 真值表验证"] --> I["候选 Pareto 前沿"]
+    end
+    E --> F
+    G --> H
+    I -.->|拒绝| A
 ```
 
 ## 状态

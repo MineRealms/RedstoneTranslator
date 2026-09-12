@@ -24,20 +24,23 @@ therefore uses a real EDA-style flow instead of ad-hoc generation.
 ```mermaid
 flowchart LR
     subgraph frontend["Frontend and IR"]
+        direction TB
         V["Verilog / SystemVerilog"] --> L["Logical IR (RCIR)"]
         L --> R["Routable IR (RCIR)"]
     end
     subgraph pnr["Place and Route"]
-        R --> T["PnR topology"]
-        T --> P["Placement: deterministic seed + simulated annealing"]
-        P --> RT["Routing: extracted A* + PathFinder congestion"]
+        direction TB
+        T["PnR topology"] --> P["Placement: seed + simulated annealing"]
+        P --> RT["Routing: A* + PathFinder congestion"]
         RT --> C["Compression ladder"]
     end
     subgraph verify["Physical verification and output"]
-        C --> W["World3D"]
-        W --> S["Redstone simulator + truth table"]
+        direction TB
+        W["World3D"] --> S["Redstone simulator + truth table"]
         S --> N["NBT / snapshot (.rsnap)"]
     end
+    R --> T
+    C --> W
 ```
 
 The leaf-level physical search is a beam search whose candidate evaluation is
@@ -45,16 +48,25 @@ being split between the CPU (irregular search and exact construction) and an
 optional GPU backend (cheap, deterministic batch filtering):
 
 ```mermaid
-flowchart TD
-    A["Beam frontier: Vec of (World3D, PlacementState)"] --> B["Enumerate placement intents"]
-    B --> D{"Candidate evaluator"}
-    D -->|"CPU reference"| E["Legal candidates"]
-    D -->|"wgpu GPU (--features gpu, MCHDL_GPU=1)"| E
-    E --> F["Exact router (A*)"]
-    F --> G["PECA electrical legality (pin contracts)"]
-    G --> H["Simulator + truth-table verification"]
-    H -->|accept| I["Pareto frontier of candidates"]
-    H -->|reject| A
+flowchart LR
+    subgraph gen["Candidate generation"]
+        direction TB
+        A["Beam frontier: Vec of (World3D, PlacementState)"] --> B["Enumerate placement intents"]
+        B --> D{"Candidate evaluator"}
+        D -->|"CPU reference"| E["Legal candidates"]
+        D -->|"wgpu GPU (--features gpu, MCHDL_GPU=1)"| E
+    end
+    subgraph exact["Exact physical engine"]
+        direction TB
+        F["Exact router (A*)"] --> G["PECA electrical legality (pin contracts)"]
+    end
+    subgraph verify2["Verification"]
+        direction TB
+        H["Simulator + truth-table verification"] --> I["Pareto frontier of candidates"]
+    end
+    E --> F
+    G --> H
+    I -.->|reject| A
 ```
 
 ## Status
