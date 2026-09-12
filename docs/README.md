@@ -11,7 +11,8 @@ not add new contracts to historical files.
 3. `architecture.md` — CAD-style P&R migration design (branch `cad-refactor`).
 4. `memory_refactor_plan.md` — M0.5 memory refactor plan and execution tracker (Commits 1-5 done; 6-7 pending).
 5. `electrical_connectivity_analysis.md` — PECA (M0.10), the physical electrical fact layer.
-6. The contracts and designs below for the existing pipeline.
+6. `gpu_acceleration_plan.md` — CPU/GPU heterogeneous CAD plan (Candidate IR + GPU evaluator).
+7. The contracts and designs below for the existing pipeline.
 
 ## Current
 
@@ -22,6 +23,7 @@ not add new contracts to historical files.
 | `performance_report.md` | Memory and compile-performance architecture snapshot plus M0.5 measured results |
 | `memory_refactor_plan.md` | M0.5 memory refactor plan and execution tracker (instrumentation, copy-on-write worlds, budgets, diagnostics; Commits 6-7 pending) |
 | `electrical_connectivity_analysis.md` | PECA: physical electrical facts + pin contracts + DRC (M0.10); the exclusivity check that was missing |
+| `gpu_acceleration_plan.md` | CPU/GPU heterogeneous CAD plan: Candidate IR + GPU evaluator + CPU exact engine (G0-G4) |
 | `architecture.md` | CAD migration design: macro library, placement, routing engine, PathFinder, compression |
 | `intermediate_representation_design.md` | RCIR language contract (Logical/Routable IR, lowering, provenance) |
 | `verilog_rtl_interface_design.md` | Verilog frontend pipeline and extension rules |

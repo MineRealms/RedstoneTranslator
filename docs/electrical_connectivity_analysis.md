@@ -305,3 +305,9 @@ such measurements.
 The next step is constraint-directed generation: enumerate legal support
 positions first (no foreign driver, no occupied neighbour) and derive torch
 placements from them, instead of enumerate-all-then-filter.
+
+Interim CPU mitigation (M0.12.5a): under enforcement the legal placements are
+deterministically capped before routing (`MCHDL_PLACEMENT_SAMPLE_CAP`, default
+32); the default report-only path is unchanged. The full fix is
+constraint-directed enumeration, followed by the GPU candidate evaluator
+(`docs/gpu_acceleration_plan.md`).

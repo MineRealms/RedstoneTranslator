@@ -215,6 +215,8 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M0.12.3 | Generation-time enforce (`MCHDL_PECA_ENFORCE=1`): pre-route foreign-driver pruning + driver-side pruning + candidate-level reject; default stays report-only | 373 non-heavy tests |
 | CAD-M0.12.4 | Legal-yield measurement: with enforcement the `state_next` shapes yield 0 candidates (`tail_n8`/`tail_n19` previously "compiled" only with hidden live shorts); `state_direct` yields 2; default-on blocked on placement freedom | 373 non-heavy tests |
 | CAD-M0.12.5 | Constraint-directed support enumeration (planned): generate legal support positions first instead of enumerate-all-then-filter; the `AnywhereNonAdjacent` experiment explodes the search (16-minute timeout, ~7680 candidates per NOT step) | planned |
+| CAD-M0.12.5a | Interim enforce-path mitigation: cap legal placements deterministically before routing (`MCHDL_PLACEMENT_SAMPLE_CAP`, default 32); default report-only path unchanged | 373 non-heavy tests |
+| CAD-GPU-plan | `docs/gpu_acceleration_plan.md`: CPU/GPU heterogeneous CAD architecture (Candidate IR + GPU evaluator + CPU exact engine, phases G0-G4, wgpu, integer determinism) | - |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

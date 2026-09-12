@@ -193,24 +193,64 @@ pub(super) fn generate_torch_place_and_routes(
                 || source.manhattan_distance(pos) == 2
         });
 
-    torch_strategy
+    let placements = torch_strategy
         .cartesian_product(place_strategy)
         // 1. Place Torch and Cobble
         .flat_map(|(torch, torch_pos)| place_torch_with_cobble(world, torch, torch_pos))
+        .filter(|(placed, _, cobble_pos)| {
+            match pre_route_observer.as_deref_mut() {
+                Some(observer) => {
+                    if observer(placed, *cobble_pos) {
+                        true
+                    } else {
+                        crate::perf::note_candidate_drc_pruned();
+                        false
+                    }
+                }
+                None => true,
+            }
+        })
+        .collect_vec();
+
+    // Under enforcement the legal placement count can be large (for example
+    // `AnywhereNonAdjacent` enumerates thousands). Cap it deterministically
+    // before routing; the default report-only path keeps every placement so
+    // behavior stays identical.
+    let placements = if crate::transform::place_and_route::electrical_drc::enforce_enabled() {
+        cap_placements(placements)
+    } else {
+        placements
+    };
+
+    placements
+        .into_iter()
         // 2. Route Source with Torch Place Target Position
         .flat_map(|(world, torch_pos, cobble_pos)| {
-            if let Some(observer) = pre_route_observer.as_deref_mut() {
-                if !observer(&world, cobble_pos) {
-                    crate::perf::note_candidate_drc_pruned();
-                    return Vec::new();
-                }
-            }
             generate_routes_to_cobble(config, &world, source, torch_pos, cobble_pos)
                 .into_iter()
                 .map(|(world, _)| (world, torch_pos))
                 .collect_vec()
         })
         .collect()
+}
+
+fn placement_sample_cap() -> usize {
+    std::env::var("MCHDL_PLACEMENT_SAMPLE_CAP")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|cap| *cap > 0)
+        .unwrap_or(32)
+}
+
+fn cap_placements(
+    placements: Vec<(World3D, Position, Position)>,
+) -> Vec<(World3D, Position, Position)> {
+    let cap = placement_sample_cap();
+    if placements.len() <= cap {
+        return placements;
+    }
+    let stride = placements.len().div_ceil(cap).max(1);
+    placements.into_iter().step_by(stride).take(cap).collect()
 }
 
 fn place_output_redstone(

@@ -5,6 +5,8 @@
 - Documentation index (read first): `docs/README.md`
 - Living roadmap and status log: `docs/roadmap.md`
 - CAD-style P&R migration design: `docs/architecture.md`
+- Electrical legality: `docs/electrical_connectivity_analysis.md`
+- CPU/GPU heterogeneous CAD plan: `docs/gpu_acceleration_plan.md`
 
 When asked to create or preserve project documentation, add an appropriate file under `docs/` and register it in `docs/README.md` when it is useful for future agents.
 
@@ -45,6 +47,8 @@ global placement engine.
 Local search limits (deterministic; exceeding one reports an error):
 `MCHDL_FRONTIER_CAP` (default 16,384 frontier entries per step) and
 `MCHDL_LOCAL_CLONE_LIMIT` (default 10M `World3D` clones per local search).
+Under `MCHDL_PECA_ENFORCE=1` only, `MCHDL_PLACEMENT_SAMPLE_CAP` (default 32)
+caps the legal placements routed per NOT step.
 
 Debug diagnostics (one-line summaries, off by default):
 
