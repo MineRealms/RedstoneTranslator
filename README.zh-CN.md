@@ -20,6 +20,13 @@ redstone build cpu.v   ->   cpu.nbt / cpu.schem   ->   在 Minecraft 中运行
 一格只能放一个方块、两条不同 net 不能相碰、部分格子禁止布线。因此编译器使用
 真正的 EDA 风格流程，而不是临时拼凑的生成器。
 
+## 生成示例
+
+![生成好的 8-bit CPU](tools/generated_CPU.png)
+
+由本流程生成的 8-bit CPU —— 数据通路、寄存器堆与控制逻辑完成布局布线后的红石
+结构，在 NBT 查看器中查看。
+
 ## 架构
 
 ```mermaid

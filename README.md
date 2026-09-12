@@ -21,6 +21,13 @@ The hard part is physical: redstone signal strength decays over 15 blocks
 cell, two nets must never touch, and some cells are forbidden. The compiler
 therefore uses a real EDA-style flow instead of ad-hoc generation.
 
+## Generated designs
+
+![Generated 8-bit CPU](tools/generated_CPU.png)
+
+An 8-bit CPU built by the flow — datapath, register file, and control logic
+placed and routed as redstone, rendered in the NBT viewer.
+
 ## Architecture
 
 ```mermaid
