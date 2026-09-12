@@ -1,3 +1,4 @@
+pub mod candidate_eval;
 pub mod compression;
 pub mod detailed_router;
 pub mod electrical_drc;

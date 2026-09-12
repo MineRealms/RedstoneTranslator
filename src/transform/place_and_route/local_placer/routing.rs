@@ -198,12 +198,43 @@ pub(super) fn generate_torch_place_and_routes(
                 || source.manhattan_distance(pos) == 2
         });
 
-    let placements = torch_strategy
+    // Candidate IR: enumerate placement intents without touching the world,
+    // then evaluate them in one batch. The evaluator's rejects are necessary
+    // conditions of `place_torch_with_cobble`, so dropping them here keeps the
+    // surviving set and its order unchanged.
+    let candidates = torch_strategy
         .cartesian_product(place_strategy)
-        // 1. Place Torch and Cobble
         .filter_map(|(torch, torch_pos)| {
             crate::perf::note_placement_enumerated();
-            match place_torch_with_cobble(world, torch, torch_pos) {
+            let Some(support) = torch_pos.walk(torch.direction) else {
+                crate::perf::note_placement_conflict();
+                return None;
+            };
+            Some(crate::transform::place_and_route::candidate_eval::PlacementCandidate {
+                entry: 0,
+                kind: crate::transform::place_and_route::candidate_eval::CandidateKind::Torch,
+                torch: torch_pos,
+                direction: torch.direction,
+                support,
+                source,
+            })
+        })
+        .collect_vec();
+    let scores = crate::transform::place_and_route::candidate_eval::evaluate(world, &candidates);
+
+    let placements = candidates
+        .into_iter()
+        .zip(scores)
+        .filter_map(|(candidate, score)| {
+            if !score.valid {
+                crate::perf::note_placement_conflict();
+                return None;
+            }
+            let torch = Block {
+                kind,
+                direction: candidate.direction,
+            };
+            match place_torch_with_cobble(world, torch, candidate.torch) {
                 Some(placed) => Some(placed),
                 None => {
                     crate::perf::note_placement_conflict();
