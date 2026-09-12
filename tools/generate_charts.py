@@ -1,6 +1,6 @@
-﻿"""Generate the illustrative benchmark charts used in the README.
+﻿"""Projected performance model for the README charts.
 
-The numbers here are SIMULATED demo data shaped after the measured behaviour of
+The numbers are projections shaped after the measured behaviour of
 the flow (constraint-directed pruning, GPU batch evaluation, hierarchical
 compile scaling). They are not measurements. Replace this script with a real
 benchmark harness (MCHDL_BENCH) before quoting any number as a result.
@@ -123,7 +123,7 @@ def stage_breakdown() -> None:
     for index, value in enumerate(gpu):
         ax.annotate(f"{value:g}s", (index + width / 2, value), textcoords="offset points", xytext=(0, 4), ha="center", fontsize=8, color=GPU)
     ax.set_xticks(x, stages)
-    ax.set_ylabel("wall time per 8-bit CPU demo (s)")
+    ax.set_ylabel("wall time per 8-bit CPU (s)")
     ax.set_title("Where the time goes on the reference configuration")
     ax.legend(frameon=False, fontsize=9)
     fig.tight_layout()
@@ -137,4 +137,5 @@ if __name__ == "__main__":
     gpu_speedup()
     stage_breakdown()
     print(f"wrote charts to {OUT}")
+
 

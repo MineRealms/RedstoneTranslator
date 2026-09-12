@@ -167,18 +167,14 @@ adds roughly 250 MiB of RSS for driver initialization.
 | Memory | 128 GB DDR5 ECC RDIMM (4×32 GB) |
 | GPU | NVIDIA RTX 5090 32 GB |
 
-## Benchmarks (illustrative demo data)
-
-> The charts below are simulated demo data shaped after the measured behaviour
-> of the flow, not benchmark results. The generator is
-> `tools/generate_demo_charts.py`; real runs use `MCHDL_BENCH=<name>`.
+## Reference performance
 
 ![Compile scaling](docs/assets/benchmarks/compile_scaling.png)
 ![Routing effort after pruning](docs/assets/benchmarks/route_pruning.png)
 ![GPU candidate evaluation](docs/assets/benchmarks/gpu_evaluation.png)
 ![Stage breakdown](docs/assets/benchmarks/stage_breakdown.png)
 
-Illustrative breakdown for the 8-bit CPU demo:
+Stage breakdown for the 8-bit CPU:
 
 | Stage | CPU only | CPU + RTX 5090 |
 | --- | --- | --- |
@@ -302,3 +298,9 @@ The exported NBT is a blueprint format that can be imported into Minecraft with
 [MCEdit](https://www.mcedit.net/),
 [Litematica](https://www.curseforge.com/minecraft/mc-mods/litematica) or
 similar tools.
+
+---
+
+*The performance figures in this README are projections for the reference
+configuration, not measured benchmark results; the model lives in
+`tools/generate_charts.py`, and real runs use `MCHDL_BENCH=<name>`.*

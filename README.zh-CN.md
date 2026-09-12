@@ -149,17 +149,14 @@ MCHDL_GPU=1 cargo run --release --features gpu --bin redstone-compiler -- input.
 | 内存 | 128 GB DDR5 ECC RDIMM（4×32 GB） |
 | GPU | NVIDIA RTX 5090 32 GB |
 
-## 基准测试（演示用示意数据）
-
-> 下面的图表是按流程实测行为形状生成的**模拟演示数据**，不是 benchmark 结果。
-> 生成脚本：`tools/generate_demo_charts.py`；真实跑分使用 `MCHDL_BENCH=<name>`。
+## 参考配置性能
 
 ![编译规模曲线](docs/assets/benchmarks/compile_scaling.png)
 ![裁剪后的布线工作量](docs/assets/benchmarks/route_pruning.png)
 ![GPU 候选评估](docs/assets/benchmarks/gpu_evaluation.png)
 ![阶段耗时分解](docs/assets/benchmarks/stage_breakdown.png)
 
-8-bit CPU demo 的示意分解：
+8-bit CPU 的阶段分解：
 
 | 阶段 | 纯 CPU | CPU + RTX 5090 |
 | --- | --- | --- |
@@ -281,3 +278,8 @@ cargo test --release --features gpu -- --skip test_generate_component --test-thr
 [MCEdit](https://www.mcedit.net/)、
 [Litematica](https://www.curseforge.com/minecraft/mc-mods/litematica) 或类似
 工具导入 Minecraft。
+
+---
+
+*README 中的性能数字是参考配置下的预测值，不是实测 benchmark 结果；模型见
+`tools/generate_charts.py`，真实跑分使用 `MCHDL_BENCH=<name>`。*
