@@ -1,24 +1,87 @@
 # Redstone Compiler Project
 
-Toolkit for Redstone Transfer Level Design: compile Verilog/SystemVerilog into
-a Minecraft redstone structure (NBT) through a CAD-style flow.
+Compile Verilog/SystemVerilog into Minecraft redstone structures (NBT) through
+a CAD-style place-and-route flow: IR lowering, technology mapping, placement,
+routing, electrical rule checking, and simulator-backed verification.
+
+## What it does
+
+The compiler turns a hardware description into a playable Minecraft structure:
+
+```text
+redstone build cpu.v   ->   cpu.nbt / cpu.schem   ->   runnable in Minecraft
+```
+
+The hard part is physical: redstone signal strength decays over 15 blocks
+(repeaters are needed), torches and repeaters are directional, one block per
+cell, two nets must never touch, and some cells are forbidden. The compiler
+therefore uses a real EDA-style flow instead of ad-hoc generation.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph frontend["Frontend and IR"]
+        V["Verilog / SystemVerilog"] --> L["Logical IR (RCIR)"]
+        L --> R["Routable IR (RCIR)"]
+    end
+    subgraph pnr["Place and Route"]
+        R --> T["PnR topology"]
+        T --> P["Placement: deterministic seed + simulated annealing"]
+        P --> RT["Routing: extracted A* + PathFinder congestion"]
+        RT --> C["Compression ladder"]
+    end
+    subgraph verify["Physical verification and output"]
+        C --> W["World3D"]
+        W --> S["Redstone simulator + truth table"]
+        S --> N["NBT / snapshot (.rsnap)"]
+    end
+```
+
+The leaf-level physical search is a beam search whose candidate evaluation is
+being split between the CPU (irregular search and exact construction) and an
+optional GPU backend (cheap, deterministic batch filtering):
+
+```mermaid
+flowchart TD
+    A["Beam frontier: Vec of (World3D, PlacementState)"] --> B["Enumerate placement intents"]
+    B --> D{"Candidate evaluator"}
+    D -->|"CPU reference"| E["Legal candidates"]
+    D -->|"wgpu GPU (--features gpu, MCHDL_GPU=1)"| E
+    E --> F["Exact router (A*)"]
+    F --> G["PECA electrical legality (pin contracts)"]
+    G --> H["Simulator + truth-table verification"]
+    H -->|accept| I["Pareto frontier of candidates"]
+    H -->|reject| A
+```
 
 ## Status
 
 - Frontend, Logical/Routable IR, local placement, global P&R, simulation, and
-  NBT export are in place. CAD-style placement (simulated annealing), the
-  PathFinder routing post-pass, and the compression ladder are implemented
-  behind flags; the legacy engines remain the default.
-- Current work is the **Electrical Legality Filter** (PECA): candidate
-  generation is being moved from "geometrically placeable" to "electrically
-  legal" (`docs/electrical_connectivity_analysis.md`).
+  NBT export are in place.
+- The CAD-style engines are implemented behind flags: simulated-annealing
+  placement (`--placement-engine annealed`), PathFinder negotiated congestion,
+  and the compression ladder (`--compress`). The legacy engines remain the
+  default.
+- The **Electrical Legality Filter** (PECA) validates physical redstone
+  connectivity before simulation: pin contracts (`Single`/`Merge`), report-only
+  violations, and opt-in enforcement (`MCHDL_PECA_ENFORCE=1`).
+- The **GPU candidate evaluator** is available behind `--features gpu` +
+  `MCHDL_GPU=1` (wgpu/WGSL, CPU fallback, differential-tested).
 - Known limits: simple combinational designs compile end to end; `full_adder`
-  and `fsm_1bit` currently produce no placement; hierarchical P&R supports
-  leaf children of the top module; the simulator is the verification oracle
-  and is not a vanilla-Minecraft equivalence test. Details in
-  `docs/roadmap.md` and `docs/project_status.md`.
+  and `fsm_1bit` currently produce no placement; hierarchical P&R supports leaf
+  children of the top module; the simulator is the verification oracle and is
+  not a vanilla-Minecraft equivalence test. See `docs/roadmap.md`.
 
-## How to use
+## Getting started
+
+Build (default, CPU-only):
+
+```powershell
+cargo build --release
+```
+
+Compile a design:
 
 ```text
 cargo run --release --bin redstone-compiler -- input.v out.nbt       # Verilog
@@ -29,11 +92,10 @@ cargo run --release --bin redstone-compiler -- input.rsnap out.nbt   # replay a 
 The second argument names the **snapshot output**. The compiler writes a
 directory `out.snapshot/` (IR, PnR config, candidates, instances, routes, and
 the final world `out.snapshot/out.nbt`) plus the archive `out.rsnap`. Pass a
-path ending in `.snapshot` to control the directory name exactly; the final
-NBT is always `<snapshot-dir>/<design>.nbt`.
+path ending in `.snapshot` to control the directory name exactly; the final NBT
+is always `<snapshot-dir>/<design>.nbt`.
 
-Input kinds are selected by extension: `.v` (Verilog subset), `.rcir`
-(Logical or Routable RCIR), `.rsnap`/`.snapshot` (replay prepared P&R).
+### Flags
 
 | Flag | Effect |
 | --- | --- |
@@ -45,66 +107,82 @@ Input kinds are selected by extension: `.v` (Verilog subset), `.rcir`
 | `--placement-engine legacy\|annealed` | global placement engine (default `legacy`) |
 | `--memory-budget-mb N` | fail with an error instead of an OOM abort |
 
-Environment variables (see `AGENTS.md` for details): `MCHDL_PERF=1` prints
-per-stage clone counters and RSS; `MCHDL_DEBUG_TRUTH_TABLE`,
-`MCHDL_DEBUG_PECA`, `MCHDL_DEBUG_ANNEALED`, `MCHDL_DEBUG_PLACEMENT`,
-`MCHDL_DEBUG_INPUT_SWITCH`, and `MCHDL_DEBUG_CONNECTIVITY` print diagnostics;
-`MCHDL_PECA_ENFORCE=1` enforces `Single` electrical violations; `MCHDL_BENCH`
-runs one manual full-flow benchmark per process.
+### Environment
 
-Run the tests with `cargo test --release` (see `AGENTS.md` for the
-memory-constrained subset). Benchmarks live in `test/benchmarks/`.
+| Variable | Effect |
+| --- | --- |
+| `MCHDL_PERF=1` | per-stage clone counters, RSS, and the candidate reject summary |
+| `MCHDL_DEBUG_TRUTH_TABLE=1` | first truth-table mismatch plus a leaf graph dump |
+| `MCHDL_DEBUG_PECA=1` | PECA violation reports (pre-route, driver-side, post-candidate) |
+| `MCHDL_PECA_ENFORCE=1` | enforce `Single` electrical violations (generation-time + candidate level) |
+| `MCHDL_DEBUG_ANNEALED`, `MCHDL_DEBUG_PLACEMENT`, `MCHDL_DEBUG_INPUT_SWITCH`, `MCHDL_DEBUG_CONNECTIVITY` | placement/routing diagnostics |
+| `MCHDL_BENCH=<name>` | run one manual full-flow benchmark per process |
+| `MCHDL_FRONTIER_CAP`, `MCHDL_LOCAL_CLONE_LIMIT`, `MCHDL_PLACEMENT_SAMPLE_CAP`, `MCHDL_ROUTE_QUOTA` | deterministic search limits |
+
+See `AGENTS.md` for the full list and the memory-constrained test subset.
 
 ## Viewer
 
-`tools/nbt-viewer` is a local web viewer (Vite + TypeScript + three.js) for
-the compiled NBT files. From that directory:
+`tools/nbt-viewer` is a local web viewer (Vite + TypeScript + three.js) for the
+compiled NBT files:
 
 ```powershell
+cd tools/nbt-viewer
 npm.cmd install
 npm.cmd run prepare:mcmeta   # block assets (falls back to downloading from GitHub)
 npm.cmd run dev              # http://127.0.0.1:5173
 ```
 
-Use "Open NBT" or "Open Folder" to load e.g. `out.snapshot/out.nbt` or the
-per-candidate files under `out.snapshot/candidates/`. See
-`tools/nbt-viewer/README.md` for details (including the optional Rust
-simulator WASM build).
+Use "Open NBT" or "Open Folder" to load `out.snapshot/out.nbt` or the
+per-candidate worlds under `out.snapshot/candidates/`. See
+`tools/nbt-viewer/README.md` for details (including the optional Rust simulator
+WASM build).
 
-## Compiler Stack
+## Testing and benchmarks
 
-```text
-Verilog/SystemVerilog -> Logical IR (RCIR) -> Routable IR (RCIR) -> Place and Route -> World3D -> NBT
+```powershell
+cargo test --release -- --skip test_generate_component --test-threads=1
+cargo test --release --features gpu -- --skip test_generate_component --test-threads=1
 ```
 
-- Frontend and Logical IR: parse and elaborate the Verilog subset, preserve
-  bus width and state intent (`docs/verilog_rtl_interface_design.md`).
-- Routable IR: target-mapped scalar netlist with explicit ports, nets, and
-  net classes (`docs/intermediate_representation_design.md`).
-- Place and Route: local candidate generation plus global placement/routing.
-  The CAD-style flow is implemented (placement IR and macros, deterministic
-  seed + simulated annealing, extracted A* router, PathFinder negotiated
-  congestion, compression ladder); new engines sit behind flags
-  (`--placement-engine annealed`, `GlobalRoutingConfig::pathfinder`,
-  `--compress`). Design notes in `docs/architecture.md`.
-- Electrical legality: PECA derives redstone components and their driving
-  terminals from the placed world and checks pin contracts before the
-  simulator (`docs/electrical_connectivity_analysis.md`).
-- World, World3D: `World` and `World3D` are collections of blocks and
-  positions, designed to correspond exactly to the Minecraft world. See
-  [world/mod.rs](https://github.com/Redstone-Compiler/redstone-compiler/blob/master/src/world/mod.rs).
-- NBT: a blueprint format that can be imported into Minecraft using
-  [MCEdit](https://www.mcedit.net/),
-  [Litematica](https://www.curseforge.com/minecraft/mc-mods/litematica) or
-  similar.
+The eight search-heavy `test_generate_component_*` tests are excluded on
+memory-constrained machines (32 GB); run them on a larger box. Benchmarks live
+in `test/benchmarks/` (`not_chain`, `full_adder`, `dense_or_cone`, `fsm_1bit`,
+`fsm_2bit`, `random_10`, `random_40`).
+
+## Project layout
+
+| Path | Contents |
+| --- | --- |
+| `src/verilog/` | Verilog subset parser and elaboration |
+| `src/ir/` | Logical/Routable IR, technology mapping, cone partitioning |
+| `src/graph/`, `src/logic/` | graph model, logic decomposition, truth tables |
+| `src/transform/place_and_route/` | local placer, PECA, SA placer, routing, compression |
+| `src/transform/place_and_route/global_pnr/` | global placement/routing, snapshots, cell library |
+| `src/world/` | World/World3D, blocks, redstone simulator, shared electrical rules |
+| `src/nbt/` | NBT/schematic import and export |
+| `src/gpu/` | optional wgpu candidate evaluator (`--features gpu`) |
+| `tools/nbt-viewer/` | TypeScript 3D viewer for compiled NBT |
+| `test/benchmarks/` | benchmark Verilog designs |
+| `docs/` | design documents and the living roadmap |
 
 ## Documentation
 
 Start at `docs/README.md` (index). The most useful entries:
 
-- `docs/roadmap.md` — living plan and per-commit status log.
-- `docs/project_status.md` — done / not done / precise blockers.
+- `docs/roadmap.md` — living plan, milestone order, status log, known gaps.
 - `docs/architecture.md` — CAD migration design and milestone status.
 - `docs/electrical_connectivity_analysis.md` — PECA / Electrical Legality Filter.
-- `docs/memory_refactor_plan.md` — memory architecture work and measurements.
-- `docs/performance_report.md` — memory and compile-performance snapshot.
+- `docs/gpu_acceleration_plan.md` — CPU/GPU heterogeneous CAD plan (G0-G4).
+- `docs/performance_report.md` — memory, reject statistics, and GPU measurements.
+- `docs/intermediate_representation_design.md`, `docs/verilog_rtl_interface_design.md`,
+  `docs/technology_mapping_design.md`, `docs/cell_library_design.md`,
+  `docs/physical_design_intent.md`, `docs/compilation_snapshots.md`,
+  `docs/pnr_logging.md`, `docs/sequential_primitives.md` — pipeline contracts.
+
+## NBT compatibility
+
+The exported NBT is a blueprint format that can be imported into Minecraft with
+[MCEdit](https://www.mcedit.net/),
+[Litematica](https://www.curseforge.com/minecraft/mc-mods/litematica) or
+similar tools.
