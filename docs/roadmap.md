@@ -217,7 +217,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M0.12.5 | Constraint-directed support enumeration (planned): generate legal support positions first instead of enumerate-all-then-filter; the `AnywhereNonAdjacent` experiment explodes the search (16-minute timeout, ~7680 candidates per NOT step) | planned |
 | CAD-M0.12.5a | Interim enforce-path mitigation: cap legal placements deterministically before routing (`MCHDL_PLACEMENT_SAMPLE_CAP`, default 32); default report-only path unchanged | 373 non-heavy tests |
 | CAD-GPU-plan | `docs/gpu_acceleration_plan.md`: CPU/GPU heterogeneous CAD architecture (Candidate IR + GPU evaluator + CPU exact engine, phases G0-G4, wgpu, integer determinism) | - |
-| CAD-M0.12.0 | Per-stage candidate reject statistics (`docs/candidate_reject_statistics.md`): geometry / electrical / routing / simulation breakdown per benchmark; decides M0.12.5 and G1 priorities | planned |
+| CAD-M0.12.0 | Per-stage candidate reject statistics: enumerated/conflict/route attempts/failures/successes/accepted counters in `[perf]` and per-step trace; routing dominates (55-64% of attempts fail after 18-31% geometry rejects) | 373 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
 --test-threads=1`; the eight search-heavy local placer component tests are

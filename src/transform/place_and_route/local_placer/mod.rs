@@ -462,7 +462,9 @@ impl LocalPlacer {
         let mut step = 0;
         while step < self.visit_orders.len() && Some(step) != finish_step {
             let prev_len = queue.len();
+            let stats_before = StepStats::capture();
             let result = self.do_step(step, queue, input_constraints, Some(progress));
+            let step_stats = stats_before.delta();
             let next_len = result.queue.len();
 
             let compacted = self.compact_queue_after_step(step, result.queue);
@@ -489,6 +491,12 @@ impl LocalPlacer {
                 generated_candidates = next_len,
                 compacted_candidates = compacted_len,
                 sampled_candidates = sampled_len,
+                enumerated = step_stats.enumerated,
+                conflict = step_stats.conflict,
+                pruned = step_stats.pruned,
+                route_attempts = step_stats.route_attempts,
+                route_failures = step_stats.route_failures,
+                route_successes = step_stats.route_successes,
                 "local placement step completed"
             );
         }
@@ -786,6 +794,7 @@ impl LocalPlacer {
                         .routes
                         .into_iter()
                         .flat_map(|(candidate_world, route_path)| {
+                            crate::perf::note_route_attempt();
                             // Keep the OR tap on the terminal redstone where both inputs
                             // have joined. Source or mid-route taps can see only one input.
                             let positions = route_path
@@ -797,6 +806,11 @@ impl LocalPlacer {
                                 })
                                 .into_iter()
                                 .collect_vec();
+                            if positions.is_empty() {
+                                crate::perf::note_route_failure();
+                            } else {
+                                crate::perf::note_route_success();
+                            }
                             positions
                                 .into_iter()
                                 .map(|position| {
@@ -1200,6 +1214,42 @@ fn local_placer_progress_label(progress_label: Option<&str>) -> LocalPlacerProgr
 struct StepResult {
     queue: PlacerQueue,
     debug: StepDebug,
+}
+
+/// Per-step deltas of the global candidate counters, used for the step trace.
+#[derive(Clone, Copy)]
+struct StepStats {
+    enumerated: usize,
+    conflict: usize,
+    pruned: usize,
+    route_attempts: usize,
+    route_failures: usize,
+    route_successes: usize,
+}
+
+impl StepStats {
+    fn capture() -> Self {
+        Self {
+            enumerated: crate::perf::placements_enumerated(),
+            conflict: crate::perf::placements_conflict(),
+            pruned: crate::perf::candidate_drc_pruned(),
+            route_attempts: crate::perf::route_attempts(),
+            route_failures: crate::perf::route_failures(),
+            route_successes: crate::perf::route_successes(),
+        }
+    }
+
+    fn delta(self) -> Self {
+        let now = Self::capture();
+        Self {
+            enumerated: now.enumerated.saturating_sub(self.enumerated),
+            conflict: now.conflict.saturating_sub(self.conflict),
+            pruned: now.pruned.saturating_sub(self.pruned),
+            route_attempts: now.route_attempts.saturating_sub(self.route_attempts),
+            route_failures: now.route_failures.saturating_sub(self.route_failures),
+            route_successes: now.route_successes.saturating_sub(self.route_successes),
+        }
+    }
 }
 
 struct PlacementGeneration {

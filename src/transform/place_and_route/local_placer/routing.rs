@@ -50,6 +50,7 @@ pub(super) fn generate_constant_placements(
         }
     };
 
+    crate::perf::note_placements_enumerated_by(positions.len());
     let mut generated = positions
         .into_iter()
         .filter_map(|position| {
@@ -61,6 +62,7 @@ pub(super) fn generate_constant_placements(
                 },
             };
             if placed_node.has_conflict(world, &Default::default()) {
+                crate::perf::note_placement_conflict();
                 return None;
             }
             let mut new_world = world.clone();
@@ -112,6 +114,8 @@ pub(super) fn generate_inputs(
         }
     };
 
+    let enumerated = input_strategy.len().saturating_mul(place_strategy.len());
+    crate::perf::note_placements_enumerated_by(enumerated);
     let mut generated = input_strategy
         .into_iter()
         .cartesian_product(place_strategy)
@@ -119,6 +123,7 @@ pub(super) fn generate_inputs(
         .flat_map(|(block, position)| {
             let placed_node = PlacedNode { position, block };
             if placed_node.has_conflict(world, &Default::default()) {
+                crate::perf::note_placement_conflict();
                 return None;
             }
 
@@ -196,7 +201,16 @@ pub(super) fn generate_torch_place_and_routes(
     let placements = torch_strategy
         .cartesian_product(place_strategy)
         // 1. Place Torch and Cobble
-        .flat_map(|(torch, torch_pos)| place_torch_with_cobble(world, torch, torch_pos))
+        .filter_map(|(torch, torch_pos)| {
+            crate::perf::note_placement_enumerated();
+            match place_torch_with_cobble(world, torch, torch_pos) {
+                Some(placed) => Some(placed),
+                None => {
+                    crate::perf::note_placement_conflict();
+                    None
+                }
+            }
+        })
         .filter(|(placed, _, cobble_pos)| {
             match pre_route_observer.as_deref_mut() {
                 Some(observer) => {
@@ -226,7 +240,14 @@ pub(super) fn generate_torch_place_and_routes(
         .into_iter()
         // 2. Route Source with Torch Place Target Position
         .flat_map(|(world, torch_pos, cobble_pos)| {
-            generate_routes_to_cobble(config, &world, source, torch_pos, cobble_pos)
+            crate::perf::note_route_attempt();
+            let routes = generate_routes_to_cobble(config, &world, source, torch_pos, cobble_pos);
+            if routes.is_empty() {
+                crate::perf::note_route_failure();
+            } else {
+                crate::perf::note_route_success();
+            }
+            routes
                 .into_iter()
                 .map(|(world, _)| (world, torch_pos))
                 .collect_vec()

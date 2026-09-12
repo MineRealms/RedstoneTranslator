@@ -288,6 +288,7 @@ fn generate_unit_candidates(
             candidate.halo = contract.halo;
         }
         candidates.push(candidate);
+        crate::perf::note_candidate_accepted();
     }
     Ok(pareto_frontier(candidates, config.max_candidates))
 }
@@ -1148,13 +1149,18 @@ mod tests {
         let candidates =
             generate_routable_module_candidates_with_progress_label(&module, &config, None, Some(label))?;
         eprintln!(
-            "[repro] {label}: candidates={} truth_rejects={} port_rejects={} drc_violations={} drc_rejects={} drc_pruned={}",
+            "[repro] {label}: candidates={} truth_rejects={} port_rejects={} drc_violations={} drc_rejects={} drc_pruned={} enumerated={} conflict={} route_attempts={} route_failures={} route_successes={}",
             candidates.len(),
             crate::perf::candidate_truth_rejects(),
             crate::perf::candidate_port_rejects(),
             crate::perf::candidate_drc_violations(),
             crate::perf::candidate_drc_rejects(),
-            crate::perf::candidate_drc_pruned()
+            crate::perf::candidate_drc_pruned(),
+            crate::perf::placements_enumerated(),
+            crate::perf::placements_conflict(),
+            crate::perf::route_attempts(),
+            crate::perf::route_failures(),
+            crate::perf::route_successes()
         );
         Ok(())
     }

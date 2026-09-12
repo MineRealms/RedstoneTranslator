@@ -29,6 +29,12 @@ static CANDIDATE_DRC_REJECTS: AtomicUsize = AtomicUsize::new(0);
 static CANDIDATE_DRC_PRE_ROUTE: AtomicUsize = AtomicUsize::new(0);
 static CANDIDATE_DRC_DRIVER_SIDE: AtomicUsize = AtomicUsize::new(0);
 static CANDIDATE_DRC_PRUNED: AtomicUsize = AtomicUsize::new(0);
+static PLACEMENTS_ENUMERATED: AtomicUsize = AtomicUsize::new(0);
+static PLACEMENTS_CONFLICT: AtomicUsize = AtomicUsize::new(0);
+static ROUTE_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+static ROUTE_FAILURES: AtomicUsize = AtomicUsize::new(0);
+static ROUTE_SUCCESSES: AtomicUsize = AtomicUsize::new(0);
+static CANDIDATES_ACCEPTED: AtomicUsize = AtomicUsize::new(0);
 
 /// Maximum number of local placement generations before the search gives up.
 /// A deterministic guard against the exponential local search; the error is
@@ -163,6 +169,34 @@ pub fn note_candidate_drc_pruned() {
     CANDIDATE_DRC_PRUNED.fetch_add(1, Ordering::Relaxed);
 }
 
+pub fn note_placement_enumerated() {
+    PLACEMENTS_ENUMERATED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn note_placements_enumerated_by(count: usize) {
+    PLACEMENTS_ENUMERATED.fetch_add(count, Ordering::Relaxed);
+}
+
+pub fn note_placement_conflict() {
+    PLACEMENTS_CONFLICT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn note_route_attempt() {
+    ROUTE_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn note_route_failure() {
+    ROUTE_FAILURES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn note_route_success() {
+    ROUTE_SUCCESSES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn note_candidate_accepted() {
+    CANDIDATES_ACCEPTED.fetch_add(1, Ordering::Relaxed);
+}
+
 pub fn candidate_drc_violations() -> usize {
     CANDIDATE_DRC_VIOLATIONS.load(Ordering::Relaxed)
 }
@@ -181,6 +215,30 @@ pub fn candidate_drc_driver_side() -> usize {
 
 pub fn candidate_drc_pruned() -> usize {
     CANDIDATE_DRC_PRUNED.load(Ordering::Relaxed)
+}
+
+pub fn placements_enumerated() -> usize {
+    PLACEMENTS_ENUMERATED.load(Ordering::Relaxed)
+}
+
+pub fn placements_conflict() -> usize {
+    PLACEMENTS_CONFLICT.load(Ordering::Relaxed)
+}
+
+pub fn route_attempts() -> usize {
+    ROUTE_ATTEMPTS.load(Ordering::Relaxed)
+}
+
+pub fn route_failures() -> usize {
+    ROUTE_FAILURES.load(Ordering::Relaxed)
+}
+
+pub fn route_successes() -> usize {
+    ROUTE_SUCCESSES.load(Ordering::Relaxed)
+}
+
+pub fn candidates_accepted() -> usize {
+    CANDIDATES_ACCEPTED.load(Ordering::Relaxed)
 }
 
 pub fn candidate_truth_rejects() -> usize {
@@ -209,6 +267,12 @@ pub fn reset_for_tests() {
     CANDIDATE_DRC_PRE_ROUTE.store(0, Ordering::Relaxed);
     CANDIDATE_DRC_DRIVER_SIDE.store(0, Ordering::Relaxed);
     CANDIDATE_DRC_PRUNED.store(0, Ordering::Relaxed);
+    PLACEMENTS_ENUMERATED.store(0, Ordering::Relaxed);
+    PLACEMENTS_CONFLICT.store(0, Ordering::Relaxed);
+    ROUTE_ATTEMPTS.store(0, Ordering::Relaxed);
+    ROUTE_FAILURES.store(0, Ordering::Relaxed);
+    ROUTE_SUCCESSES.store(0, Ordering::Relaxed);
+    CANDIDATES_ACCEPTED.store(0, Ordering::Relaxed);
 }
 
 pub fn rss_bytes() -> Option<usize> {
@@ -310,7 +374,7 @@ pub fn print_summary_if_enabled() {
         .map(|bytes| format!("{} MiB", bytes >> 20))
         .unwrap_or_else(|| "n/a".to_owned());
     eprintln!(
-        "[perf] summary clones={} clone_bytes={} layer_copies={} layer_copy_bytes={} alloc_bytes={} candidate_truth_rejects={} candidate_port_rejects={} candidate_drc_violations={} candidate_drc_rejects={} candidate_drc_pre_route={} candidate_drc_driver_side={} candidate_drc_pruned={} peak_rss={} budget={} exceeded={}",
+        "[perf] summary clones={} clone_bytes={} layer_copies={} layer_copy_bytes={} alloc_bytes={} candidate_truth_rejects={} candidate_port_rejects={} candidate_drc_violations={} candidate_drc_rejects={} candidate_drc_pre_route={} candidate_drc_driver_side={} candidate_drc_pruned={} placements_enumerated={} placements_conflict={} route_attempts={} route_failures={} route_successes={} candidates_accepted={} peak_rss={} budget={} exceeded={}",
         world_clone_count(),
         world_clone_bytes(),
         layer_copy_count(),
@@ -323,6 +387,12 @@ pub fn print_summary_if_enabled() {
         candidate_drc_pre_route(),
         candidate_drc_driver_side(),
         candidate_drc_pruned(),
+        placements_enumerated(),
+        placements_conflict(),
+        route_attempts(),
+        route_failures(),
+        route_successes(),
+        candidates_accepted(),
         rss,
         budget_bytes() >> 20,
         budget_exceeded()
