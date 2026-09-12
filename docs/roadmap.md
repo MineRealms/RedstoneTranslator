@@ -219,6 +219,8 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-GPU-plan | `docs/gpu_acceleration_plan.md`: CPU/GPU heterogeneous CAD architecture (Candidate IR + GPU evaluator + CPU exact engine, phases G0-G4, wgpu, integer determinism) | - |
 | CAD-G1a | Candidate IR + CPU evaluator boundary: enumeration emits `PlacementCandidate` records and batch evaluation returns integer scores; behavior-identical (`not_chain` counters and NBT hash unchanged) | 378 non-heavy tests |
 | CAD-G1b | wgpu candidate evaluator behind `--features gpu` + `MCHDL_GPU=1`: WGSL kernel mirrors the CPU evaluator, differential test passes on the RTX 4060, end-to-end NBT hash unchanged | 378 non-heavy tests (+2 GPU tests) |
+| CAD-G2a | SA batch move-evaluation boundary: `MoveEvaluator` trait + `CpuMoveEvaluator` reference (`PlacementMove` -> `MoveDelta`), SA unchanged by default | 379 non-heavy tests |
+| CAD-G2b | wgpu kernel for the local move cost delta (wire/bbox/blocked/overlap/spacing/pin-access) with a differential test against `CpuMoveEvaluator` | planned |
 | CAD-M0.12.0 | Per-stage candidate reject statistics: enumerated/conflict/route attempts/failures/successes/accepted counters in `[perf]` and per-step trace; routing dominates (55-64% of attempts fail after 18-31% geometry rejects) | 373 non-heavy tests |
 
 All counts are `cargo test --release --lib -- --skip test_generate_component
