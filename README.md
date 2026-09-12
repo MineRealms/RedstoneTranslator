@@ -12,7 +12,7 @@ routing, electrical rule checking, and simulator-backed verification.
 
 The compiler turns a hardware description into a playable Minecraft structure:
 
-```text
+```text 
 redstone build cpu.v   ->   cpu.nbt / cpu.schem   ->   runnable in Minecraft
 ```
 
