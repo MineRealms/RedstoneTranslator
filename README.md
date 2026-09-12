@@ -1,5 +1,7 @@
 # Redstone Compiler Project
 
+**English** | [中文](README.zh-CN.md)
+
 Compile Verilog/SystemVerilog into Minecraft redstone structures (NBT) through
 a CAD-style place-and-route flow: IR lowering, technology mapping, placement,
 routing, electrical rule checking, and simulator-backed verification.
