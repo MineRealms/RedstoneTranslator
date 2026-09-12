@@ -17,7 +17,7 @@ Target user experience:
 redstone build cpu.v   ->   cpu.nbt / cpu.schem   ->   runnable in Minecraft
 ```
 
-The strategic position (see `redstone_compiler_architecture.md`): the value of
+The strategic position: the value of
 this project is the **IR + P&R + World/NBT + simulation loop**, not the
 frontend. Extend around that core; do not replace it.
 
@@ -53,8 +53,8 @@ extend the frontend, then build the demos.
 
 ### CAD refactor track (branch `cad-refactor`)
 
-The beam-search local placer is the blocking bottleneck (see
-`docs/project_status.md`). A CAD-style replacement is designed in
+The beam-search local placer is the blocking bottleneck (see the Known gaps
+section). A CAD-style replacement is designed in
 `docs/architecture.md`: force-directed initial placement + simulated
 annealing, verified macro library (primitive and logic macros), unified 3D A*
 router with pin escape, coarse global routing, PathFinder negotiated
@@ -67,7 +67,7 @@ preserved; the CAD track replaces only the physical search engine behind the
 M0-M5 are implemented; see the status log below for per-commit evidence. M0.5
 (the memory refactor) is in progress: the copy-on-write `World3D`, the local
 work budget, the frontier cap, and the adaptive box are done, which removed the
-OOM wall (see `docs/memory_refactor_plan.md`). The `state_next` truth-table
+OOM wall. The `state_next` truth-table
 rejection is now explained and confirmed as a missing electrical-exclusivity
 check: a NOT input pin (support cobble) was placed adjacent to a foreign power
 source, so the pin is driven by `state | ~state = 1`. The fix is a physical
@@ -163,7 +163,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 
 | Round | Scope | Tests |
 | --- | --- | --- |
-| Phase 0 | Clone, environment, architecture report, `docs/redstone_compiler_architecture.md` | check + 253 non-heavy tests |
+| Phase 0 | Clone, environment, architecture report | check + 253 non-heavy tests |
 | Step 1 | General mapper, target/policy, dispatch, docs | 270 non-heavy tests |
 | Step 1.5 | Cone partitioning (leaves below the 40-node placer limit) | 274 non-heavy tests |
 | Step 1.6 | Constants end to end (redstone block / inverter expansion) | 278 non-heavy tests |
@@ -196,7 +196,7 @@ Goal: accept realistic Verilog/SystemVerilog or delegate parsing to Yosys.
 | CAD-M5.0 | Compression ladder: descending box iteration, acceptance bookkeeping, generated box-intent integration with the PnR flow | 362 non-heavy tests |
 | CAD-M5.1 | CLI `--compress` wiring for Verilog, Logical RCIR, and Routable RCIR inputs (composite tops; replaces `--intent`) | 362 non-heavy tests |
 | CAD-perf-report | `docs/performance_report.md`: memory/compile-performance architecture snapshot for external review | - |
-| CAD-M0.5 | Memory architecture refactor (`docs/memory_refactor_plan.md`): Commits 1, 2, 3, 5 done; Commits 6 (macro library) and 7 (validation clones) pending | 362 non-heavy tests |
+| CAD-M0.5 | Memory architecture refactor: Commits 1, 2, 3, 5 done (instrumentation, COW worlds, budgets, adaptive box); Commits 6 (verified macro library) and 7 (validation/attempt clone reduction) pending; measurements in `docs/performance_report.md` | 362 non-heavy tests |
 | CAD-M0.5.1 | `perf` module: world-clone counters, stage guards, RSS sampling, memory budget + `--memory-budget-mb`; `not_chain` shows 47,660 clones / 4.1 GB clone bytes | 362 non-heavy tests |
 | CAD-M0.5.2 | Adaptive annealed box (volume-derived, no 64 clamp) and compression ladder now shrinks until failure and keeps the smallest valid box | 362 non-heavy tests |
 | CAD-M0.5.3 | Copy-on-write `World3D` (per-layer `Arc`): `not_chain` peak RSS 265→58 MiB, candidate prep 394→153 ms, suite 7.3→3.2 s | 362 non-heavy tests |
@@ -240,4 +240,6 @@ excluded on this machine for memory reasons and must be run on a larger box.
   (minimal failing subgraph `Not(Not(state))`, M0.8). Fixing or replacing the
   leaf realizer is the next high-value step.
 - Global PnR only supports leaf children.
+- Full P&R of the two-bit FSM and the ignored FSM/counter smoke tests are
+  pending; `fsm_1bit` fails at `state_next` placement.
 - `Piston` is a stub across NBT export and the simulator.
